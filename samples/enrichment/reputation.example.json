@@ -1,0 +1,12 @@
+{
+  "provider": "portfolio-local-intel",
+  "indicators": {
+    "98.85.125.100": {
+      "verdict": "unknown",
+      "confidence": 0.2,
+      "description": "Exemplo local: substitua por uma fonte autorizada e verificável.",
+      "source_url": null,
+      "expires_at": "2027-01-01T00:00:00Z"
+    }
+  }
+}

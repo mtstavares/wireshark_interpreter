@@ -1,0 +1,13 @@
+{
+  "suricata-signature": [
+    {
+      "kind": "platform",
+      "namespace": "CPE",
+      "value": "cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*",
+      "title": "Produto de exemplo — substitua somente com evidência de versão",
+      "description": "Entrada demonstrativa para um catálogo interno revisado.",
+      "confidence": 0.5,
+      "source_url": "https://nvd.nist.gov/products/cpe"
+    }
+  ]
+}

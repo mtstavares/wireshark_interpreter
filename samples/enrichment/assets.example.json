@@ -1,0 +1,19 @@
+{
+  "allowlist": ["10.44.44.0/24"],
+  "assets": {
+    "10.44.44.21": {
+      "name": "estacao-laboratorio",
+      "role": "workstation",
+      "owner": "laboratorio",
+      "criticality": "medium",
+      "labels": ["managed", "test-environment"]
+    },
+    "10.44.44.100": {
+      "name": "dispositivo-snmp",
+      "role": "network-device",
+      "owner": "infraestrutura",
+      "criticality": "high",
+      "labels": ["managed", "snmp"]
+    }
+  }
+}

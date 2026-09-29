@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.env
+.data/
+reports/
+node_modules/
+dist/
+build/
+*.egg-info/
+*.pcap
+*.pcapng
+
+# Mantem somente a captura vazia e inofensiva usada nos testes manuais.
+!samples/manual/empty.pcap

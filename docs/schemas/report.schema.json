@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pcap-security-analyzer.local/schemas/report-1.2.json",
+  "title": "SecurityReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_id",
+    "generated_at",
+    "analysis_id",
+    "analysis_status",
+    "capture",
+    "executive_summary",
+    "summary",
+    "analyzers",
+    "activities",
+    "findings",
+    "hosts",
+    "services",
+    "timeline",
+    "indicators",
+    "enrichments",
+    "assets",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.2" },
+    "report_id": { "type": "string", "format": "uuid" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "analysis_id": { "type": "string", "format": "uuid" },
+    "analysis_status": {
+      "enum": ["completed", "completed_with_warnings", "failed"]
+    },
+    "capture": { "$ref": "#/$defs/capture" },
+    "executive_summary": { "type": "string", "minLength": 1 },
+    "summary": { "$ref": "#/$defs/summary" },
+    "analyzers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/analyzer" }
+    },
+    "activities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/activity" }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "hosts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/host" }
+    },
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/service" }
+    },
+    "timeline": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/timeline" }
+    },
+    "indicators": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/indicator" }
+    },
+    "enrichments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/enrichment" }
+    },
+    "assets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/asset_context" }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "original_filename", "sha256", "size_bytes", "capture_format"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "original_filename": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1 },
+        "capture_format": { "enum": ["pcap", "pcapng"] }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "flow_count",
+        "event_count",
+        "host_count",
+        "service_count",
+        "finding_count",
+        "enrichment_count",
+        "severity_counts",
+        "first_seen",
+        "last_seen"
+      ],
+      "properties": {
+        "flow_count": { "type": "integer", "minimum": 0 },
+        "event_count": { "type": "integer", "minimum": 0 },
+        "host_count": { "type": "integer", "minimum": 0 },
+        "service_count": { "type": "integer", "minimum": 0 },
+        "finding_count": { "type": "integer", "minimum": 0 },
+        "enrichment_count": { "type": "integer", "minimum": 0 },
+        "severity_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["informational", "low", "medium", "high", "critical"],
+          "properties": {
+            "informational": { "type": "integer", "minimum": 0 },
+            "low": { "type": "integer", "minimum": 0 },
+            "medium": { "type": "integer", "minimum": 0 },
+            "high": { "type": "integer", "minimum": 0 },
+            "critical": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "first_seen": { "type": ["string", "null"], "format": "date-time" },
+        "last_seen": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "analyzer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "version", "diagnostic"],
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "type": "string" },
+        "version": { "type": ["string", "null"] },
+        "diagnostic": { "type": ["string", "null"] }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reference", "source"],
+      "properties": {
+        "kind": { "type": "string" },
+        "reference": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "category",
+        "severity",
+        "confidence",
+        "assertion_status",
+        "summary",
+        "first_seen",
+        "last_seen",
+        "source_ip",
+        "destination_ip",
+        "destination_port",
+        "evidence",
+        "mitigations",
+        "mitre_attack",
+        "detector_name",
+        "detector_version",
+        "wireshark_filter"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "severity": { "enum": ["informational", "low", "medium", "high", "critical"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "assertion_status": { "type": "string" },
+        "summary": { "type": "string" },
+        "first_seen": { "type": ["string", "null"], "format": "date-time" },
+        "last_seen": { "type": ["string", "null"], "format": "date-time" },
+        "source_ip": { "type": ["string", "null"] },
+        "destination_ip": { "type": ["string", "null"] },
+        "destination_port": { "type": ["integer", "null"], "minimum": 0, "maximum": 65535 },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "mitigations": { "type": "array", "items": { "type": "string" } },
+        "mitre_attack": { "type": "array", "items": { "type": "string" } },
+        "detector_name": { "type": "string" },
+        "detector_version": { "type": "string" },
+        "wireshark_filter": { "type": ["string", "null"] }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "occurred_at", "finding_id", "severity", "assertion_status", "statement",
+        "source_ip", "destination_ip", "destination_port", "confidence", "evidence_refs"
+      ],
+      "properties": {
+        "occurred_at": { "type": ["string", "null"], "format": "date-time" },
+        "finding_id": { "type": "string", "format": "uuid" },
+        "severity": { "enum": ["informational", "low", "medium", "high", "critical"] },
+        "assertion_status": { "type": "string" },
+        "statement": { "type": "string", "minLength": 1 },
+        "source_ip": { "type": ["string", "null"] },
+        "destination_ip": { "type": ["string", "null"] },
+        "destination_port": {
+          "type": ["integer", "null"], "minimum": 0, "maximum": 65535
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence_refs": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ip", "first_seen", "last_seen", "sent_bytes", "received_bytes",
+        "transports", "applications"
+      ],
+      "properties": {
+        "ip": { "type": "string" },
+        "first_seen": { "type": "string", "format": "date-time" },
+        "last_seen": { "type": "string", "format": "date-time" },
+        "sent_bytes": { "type": "integer", "minimum": 0 },
+        "received_bytes": { "type": "integer", "minimum": 0 },
+        "transports": { "type": "array", "items": { "type": "string" } },
+        "applications": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ip", "port", "transport", "application", "flow_count"],
+      "properties": {
+        "ip": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "transport": { "type": "string" },
+        "application": { "type": ["string", "null"] },
+        "flow_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["occurred_at", "finding_id", "severity", "title"],
+      "properties": {
+        "occurred_at": { "type": ["string", "null"], "format": "date-time" },
+        "finding_id": { "type": "string", "format": "uuid" },
+        "severity": { "type": "string" },
+        "title": { "type": "string" }
+      }
+    },
+    "indicator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value", "finding_ids"],
+      "properties": {
+        "type": { "enum": ["ip", "mitre_attack"] },
+        "value": { "type": "string" },
+        "finding_ids": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" }
+        }
+      }
+    },
+    "enrichment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "analysis_id", "finding_id", "subject_type", "subject_value", "kind",
+        "namespace", "value", "title", "description", "confidence", "provider",
+        "source_url", "retrieved_at", "expires_at", "cache_hit", "influence"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "analysis_id": { "type": "string", "format": "uuid" },
+        "finding_id": { "type": ["string", "null"] },
+        "subject_type": { "enum": ["finding", "ip"] },
+        "subject_value": { "type": "string" },
+        "kind": { "enum": ["technique", "weakness", "vulnerability", "platform", "reputation"] },
+        "namespace": { "type": "string" },
+        "value": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "provider": { "type": "string" },
+        "source_url": { "type": ["string", "null"] },
+        "retrieved_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "cache_hit": { "type": "boolean" },
+        "influence": { "const": "context_only" }
+      }
+    },
+    "asset_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysis_id", "ip", "scope", "allowlisted", "name", "role", "owner",
+        "criticality", "labels", "provenance"
+      ],
+      "properties": {
+        "analysis_id": { "type": "string", "format": "uuid" },
+        "ip": { "type": "string" },
+        "scope": { "type": "string" },
+        "allowlisted": { "type": "boolean" },
+        "name": { "type": ["string", "null"] },
+        "role": { "type": ["string", "null"] },
+        "owner": { "type": ["string", "null"] },
+        "criticality": { "type": ["string", "null"] },
+        "labels": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "type": "string" }
+      }
+    }
+  }
+}
