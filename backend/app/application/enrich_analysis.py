@@ -30,6 +30,19 @@ _BUILTIN_REFERENCES: dict[str, list[dict[str, object]]] = {
             "source_url": "https://cwe.mitre.org/data/definitions/319.html",
         }
     ],
+    "cleartext-credential": [
+        {
+            "kind": "weakness",
+            "namespace": "CWE",
+            "value": "CWE-319",
+            "title": "Cleartext Transmission of Sensitive Information",
+            "description": (
+                "Uma credencial de autenticação foi observada sem proteção criptográfica."
+            ),
+            "confidence": 0.99,
+            "source_url": "https://cwe.mitre.org/data/definitions/319.html",
+        }
+    ],
     "legacy-snmp": [
         {
             "kind": "weakness",

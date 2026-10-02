@@ -172,6 +172,131 @@ def test_parses_and_aggregates_tshark_tsv(tmp_path: Path) -> None:
     assert len(events) == 2
 
 
+def test_correlates_cleartext_ftp_credentials_and_success(tmp_path: Path) -> None:
+    tshark_dir = tmp_path / "tshark"
+    tshark_dir.mkdir()
+    fields = [
+        "frame.number",
+        "frame.time_epoch",
+        "frame.len",
+        "ip.src",
+        "ip.dst",
+        "tcp.srcport",
+        "tcp.dstport",
+        "_ws.col.protocol",
+        "tcp.stream",
+        "ftp.request.command",
+        "ftp.request.arg",
+        "ftp.response.code",
+    ]
+    rows = [
+        [
+            "1",
+            "1700000000.0",
+            "60",
+            "10.0.0.5",
+            "10.0.0.20",
+            "51000",
+            "21",
+            "FTP",
+            "7",
+            "USER",
+            "admin",
+            "",
+        ],
+        [
+            "2",
+            "1700000000.1",
+            "60",
+            "10.0.0.5",
+            "10.0.0.20",
+            "51000",
+            "21",
+            "FTP",
+            "7",
+            "PASS",
+            "secret",
+            "",
+        ],
+        [
+            "3",
+            "1700000000.2",
+            "60",
+            "10.0.0.20",
+            "10.0.0.5",
+            "21",
+            "51000",
+            "FTP",
+            "7",
+            "",
+            "",
+            "230",
+        ],
+    ]
+    content = "\n".join(["\t".join(fields), *("\t".join(row) for row in rows)]) + "\n"
+    (tshark_dir / "stdout.log").write_text(content, encoding="utf-8")
+
+    _, events = parse_tshark_directory("analysis", tshark_dir)
+
+    authentication = [event for event in events if event.event_type == "authentication"]
+    assert len(authentication) == 1
+    assert authentication[0].src_ip == "10.0.0.5"
+    assert authentication[0].dest_ip == "10.0.0.20"
+    assert authentication[0].details == {
+        "result": "success",
+        "credential_transport": "cleartext",
+        "request_evidence": "tshark/stdout.log:packet:2",
+        "response_evidence": "tshark/stdout.log:packet:3",
+        "username": "admin",
+        "password": "secret",
+    }
+
+
+def test_http_basic_response_is_only_a_possible_success(tmp_path: Path) -> None:
+    tshark_dir = tmp_path / "tshark"
+    tshark_dir.mkdir()
+    fields = [
+        "frame.number",
+        "frame.time_epoch",
+        "frame.len",
+        "ip.src",
+        "ip.dst",
+        "tcp.srcport",
+        "tcp.dstport",
+        "_ws.col.protocol",
+        "tcp.stream",
+        "http.authbasic",
+        "http.response.code",
+    ]
+    rows = [
+        [
+            "1",
+            "1700000000.0",
+            "80",
+            "10.0.0.5",
+            "10.0.0.20",
+            "51000",
+            "80",
+            "HTTP",
+            "8",
+            "admin:secret",
+            "",
+        ],
+        ["2", "1700000000.1", "80", "10.0.0.20", "10.0.0.5", "80", "51000", "HTTP", "8", "", "200"],
+    ]
+    (tshark_dir / "stdout.log").write_text(
+        "\n".join(["\t".join(fields), *("\t".join(row) for row in rows)]) + "\n",
+        encoding="utf-8",
+    )
+
+    _, events = parse_tshark_directory("analysis", tshark_dir)
+    authentication = next(event for event in events if event.event_type == "authentication")
+
+    assert authentication.details["result"] == "possible"
+    assert authentication.details["http_status"] == 200
+    assert authentication.details["password"] == "secret"
+
+
 def test_tshark_normalization_preserves_protocol_details_and_skips_non_ip_flows(
     tmp_path: Path,
 ) -> None:

@@ -31,7 +31,7 @@ export function AboutPage() {
       </div>
       <div className="three-columns">
         <section className="panel"><h3>Sem LLM no núcleo</h3><p>A versão atual não envia tráfego para provedores de IA. Uma futura integração será opcional e não poderá criar fatos.</p></section>
-        <section className="panel"><h3>Sem exploração ativa</h3><p>O PCAP é analisado offline. Validações futuras exigirão autorização, allowlist e isolamento explícitos.</p></section>
+        <section className="panel"><h3>Validação ativa controlada</h3><p>Desabilitada por padrão. Quando configurada, exige allowlist, autorização em duas etapas e registra toda a execução sem enviar payload.</p></section>
         <section className="panel"><h3>Limitações declaradas</h3><p>TLS, capturas truncadas e ferramentas indisponíveis reduzem a visibilidade. Ausência de finding não prova ausência de ataque.</p></section>
       </div>
       <section className="panel"><h3>Reputação não é prova</h3><p>Referências CWE, CVE, CPE, MITRE ATT&CK e inteligência local preservam fonte, confiança, validade e influência contextual.</p></section>

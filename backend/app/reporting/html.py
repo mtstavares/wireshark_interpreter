@@ -6,6 +6,7 @@ from html import escape
 from backend.app.domain.findings import Severity
 from backend.app.domain.network import ServiceInventory
 from backend.app.domain.reports import ReportActivity, ReportFinding, SecurityReport
+from backend.app.domain.validation import Validation
 
 
 def render_html(report: SecurityReport) -> str:
@@ -25,20 +26,26 @@ def render_html(report: SecurityReport) -> str:
         for host in report.hosts
     )
     services = _service_summary(report.services)
-    indicators = "".join(
-        f"<li><strong>{escape(item.type)}</strong>: <code>{escape(item.value)}</code></li>"
-        for item in report.indicators
-    ) or "<li>Nenhum indicador derivado dos findings.</li>"
-    enrichments = "".join(
-        "<tr>"
-        f"<td>{escape(item.namespace)}</td>"
-        f"<td><code>{escape(item.value)}</code></td>"
-        f"<td>{escape(item.title)}</td>"
-        f"<td>{escape(item.provider)}</td>"
-        f"<td>{'sim' if item.cache_hit else 'não'}</td>"
-        "</tr>"
-        for item in report.enrichments
-    ) or '<tr><td colspan="5">Nenhum enriquecimento disponível.</td></tr>'
+    indicators = (
+        "".join(
+            f"<li><strong>{escape(item.type)}</strong>: <code>{escape(item.value)}</code></li>"
+            for item in report.indicators
+        )
+        or "<li>Nenhum indicador derivado dos findings.</li>"
+    )
+    enrichments = (
+        "".join(
+            "<tr>"
+            f"<td>{escape(item.namespace)}</td>"
+            f"<td><code>{escape(item.value)}</code></td>"
+            f"<td>{escape(item.title)}</td>"
+            f"<td>{escape(item.provider)}</td>"
+            f"<td>{'sim' if item.cache_hit else 'não'}</td>"
+            "</tr>"
+            for item in report.enrichments
+        )
+        or '<tr><td colspan="5">Nenhum enriquecimento disponível.</td></tr>'
+    )
     asset_context = "".join(
         "<tr>"
         f"<td>{escape(item.ip)}</td>"
@@ -50,14 +57,17 @@ def render_html(report: SecurityReport) -> str:
         "</tr>"
         for item in report.assets
     )
-    timeline = "".join(
-        "<li>"
-        f"<time>{escape(_date(item.occurred_at))}</time> "
-        f'<span class="badge {item.severity.value}">{escape(item.severity.value)}</span> '
-        f"{escape(item.title)}"
-        "</li>"
-        for item in report.timeline
-    ) or "<li>Nenhum finding para compor a timeline.</li>"
+    timeline = (
+        "".join(
+            "<li>"
+            f"<time>{escape(_date(item.occurred_at))}</time> "
+            f'<span class="badge {item.severity.value}">{escape(item.severity.value)}</span> '
+            f"{escape(item.title)}"
+            "</li>"
+            for item in report.timeline
+        )
+        or "<li>Nenhum finding para compor a timeline.</li>"
+    )
     analyzers = "".join(
         "<tr>"
         f"<td>{escape(item.name)}</td>"
@@ -68,6 +78,9 @@ def render_html(report: SecurityReport) -> str:
         for item in report.analyzers
     )
     limitations = "".join(f"<li>{escape(item)}</li>" for item in report.limitations)
+    validations = "".join(_validation_card(item) for item in report.validations) or (
+        '<p class="empty">Nenhuma validação ativa foi planejada ou executada.</p>'
+    )
     severity = "".join(
         f'<div class="metric"><strong>{report.summary.severity_counts[level]}</strong>'
         f"<span>{escape(level.value)}</span></div>"
@@ -133,11 +146,24 @@ def render_html(report: SecurityReport) -> str:
   </section>
   <section><h2>Indicadores derivados</h2><ul>{indicators}</ul></section>
   <section>
+    <h2>Validações seguras</h2>
+    <p class="muted">Resultados técnicos são contextuais e dependem de revisão humana.</p>
+    <div class="activities">{validations}</div>
+  </section>
+  <section>
     <h2>Analisadores</h2>
     <div class="table"><table><thead><tr><th>Nome</th><th>Status</th><th>Versão</th>
     <th>Diagnóstico</th></tr></thead><tbody>{analyzers}</tbody></table></div>
   </section>
   <section><h2>Limitações</h2><ul>{limitations}</ul></section>
+  <section class="final-page">
+    <h2>Conclusão e próximos passos</h2>
+    <p>{escape(report.conclusion)}</p>
+    <ol>{"".join(f"<li>{escape(item)}</li>" for item in report.next_steps)}</ol>
+    <h3>Integridade do relatório</h3>
+    <p class="muted">SHA-256 do conteúdo canônico JSON (sem este próprio campo):</p>
+    <pre>{report.integrity_sha256}</pre>
+  </section>
 </main>
 </body>
 </html>"""
@@ -194,10 +220,36 @@ def _activity_card(activity: ReportActivity) -> str:
         <span>confianca {activity.confidence:.0%}</span>
       </div>
       <p class="activity-statement">{escape(activity.statement)}</p>
-      <p class="muted">Origem: <code>{escape(activity.source_ip or 'nao identificada')}</code>
+      <p class="muted">Origem: <code>{escape(activity.source_ip or "nao identificada")}</code>
       &rarr; Destino: <code>{destination}</code> &middot;
       classificacao: {escape(activity.assertion_status.value)}</p>
       <details><summary>Ver referencias de evidencia</summary>{evidence}</details>
+    </article>"""
+
+
+def _validation_card(validation: Validation) -> str:
+    summary = escape(validation.result_summary or validation.policy_reason)
+    audit = "".join(
+        "<li>"
+        f"<time>{escape(_date(item.occurred_at))}</time> "
+        f"{escape(item.action)} · {escape(item.actor)}"
+        "</li>"
+        for item in validation.audit
+    )
+    return f"""
+    <article class="activity">
+      <div class="finding-head">
+        <span class="badge">{escape(validation.status.value)}</span>
+        <span>{escape(validation.validator)}</span>
+        <span>{escape(validation.technical_result.value)}</span>
+      </div>
+      <p class="activity-statement"><code>{escape(validation.target_ip)}:
+      {validation.target_port}</code> — {summary}
+      </p>
+      <p class="muted">Conclusão humana:
+      <strong>{escape(validation.analyst_conclusion.value)}</strong> ·
+      escopo: {escape(validation.scope_reference)}</p>
+      <details><summary>Trilha de auditoria</summary><ol>{audit}</ol></details>
     </article>"""
 
 
@@ -281,5 +333,6 @@ th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); 
   header, section { break-inside: avoid; background: #fff; border-color: #bbb; }
   .finding, pre, .metric { background: #f5f7f9; color: #111; }
   .muted, .eyebrow, .metric span, .finding-head { color: #444; }
+  .final-page { break-before: page; }
 }
 """

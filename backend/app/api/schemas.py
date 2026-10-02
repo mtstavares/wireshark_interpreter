@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.domain.analyses import Analysis, AnalysisStatus, AnalyzerStatus
 from backend.app.domain.captures import Capture, CaptureFormat, CaptureStatus
@@ -9,6 +9,11 @@ from backend.app.domain.enrichment import EnrichmentKind
 from backend.app.domain.findings import AssertionStatus, DetectionStatus, Finding, Severity
 from backend.app.domain.network import NormalizationStatus
 from backend.app.domain.reports import SecurityReport
+from backend.app.domain.validation import (
+    AnalystConclusion,
+    ValidationStatus,
+    ValidationTechnicalResult,
+)
 
 
 class CaptureResponse(BaseModel):
@@ -224,6 +229,63 @@ class AssetContextResponse(BaseModel):
     provenance: str
 
 
+class ValidationPlanRequest(BaseModel):
+    validator: str = "tcp-connect"
+    authorization_confirmed: bool
+    scope_reference: str = Field(min_length=5, max_length=300)
+    requested_by: str = Field(min_length=2, max_length=120)
+
+
+class ValidationApprovalRequest(BaseModel):
+    approval_phrase: str
+    approved_by: str = Field(min_length=2, max_length=120)
+
+
+class ValidationReviewRequest(BaseModel):
+    conclusion: AnalystConclusion
+    rationale: str = Field(min_length=10, max_length=4000)
+    reviewed_by: str = Field(min_length=2, max_length=120)
+
+
+class ValidationAuditResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    validation_id: str
+    action: str
+    actor: str
+    occurred_at: datetime
+    details: dict[str, str | int | bool | None]
+
+
+class ValidationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    analysis_id: str
+    finding_id: str
+    validator: str
+    target_ip: str
+    target_port: int
+    status: ValidationStatus
+    policy_allowed: bool
+    policy_reason: str
+    scope_reference: str
+    requested_by: str
+    approved_by: str | None
+    created_at: datetime
+    approved_at: datetime | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    technical_result: ValidationTechnicalResult
+    analyst_conclusion: AnalystConclusion
+    result_summary: str | None
+    review_rationale: str | None
+    reviewed_by: str | None
+    reviewed_at: datetime | None
+    audit: list[ValidationAuditResponse]
+
+
 class ReportCaptureResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -322,6 +384,9 @@ class SecurityReportResponse(BaseModel):
     analysis_status: AnalysisStatus
     capture: ReportCaptureResponse
     executive_summary: str
+    conclusion: str
+    next_steps: list[str]
+    integrity_sha256: str
     summary: ReportSummaryResponse
     analyzers: list[ReportAnalyzerResponse]
     activities: list[ReportActivityResponse]
@@ -332,6 +397,7 @@ class SecurityReportResponse(BaseModel):
     indicators: list[ReportIndicatorResponse]
     enrichments: list[EnrichmentResponse]
     assets: list[AssetContextResponse]
+    validations: list[ValidationResponse]
     limitations: list[str]
 
     @classmethod

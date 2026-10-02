@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "file": "benign-https.pcap",
+      "label": "benign",
+      "description": "Cinco conexões HTTPS regulares entre o mesmo par de hosts.",
+      "expected_categories": []
+    },
+    {
+      "file": "malicious-horizontal-scan.pcap",
+      "label": "malicious",
+      "description": "Uma origem tenta SMB em dez destinos dentro de 60 segundos.",
+      "expected_categories": ["network-service-scanning"]
+    },
+    {
+      "file": "malicious-vertical-scan.pcap",
+      "label": "malicious",
+      "description": "Uma origem tenta quinze portas do mesmo destino.",
+      "expected_categories": ["network-service-scanning", "insecure-protocol"]
+    },
+    {
+      "file": "malicious-telnet.pcap",
+      "label": "malicious",
+      "description": "Conexão observada para serviço Telnet sem criptografia.",
+      "expected_categories": ["insecure-protocol"]
+    }
+  ]
+}

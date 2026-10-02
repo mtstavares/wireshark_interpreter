@@ -15,7 +15,27 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    networks:
+      - default
+      - validation-egress
+
+  validator-image:
+    profiles: ["build-only"]
+    build:
+      context: .
+      dockerfile: Dockerfile.validator
+    image: pcap-validator:local
+    network_mode: none
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 volumes:
   pcap-data:
 
+networks:
+  validation-egress:
+    name: pcap-validation-egress
+    internal: true

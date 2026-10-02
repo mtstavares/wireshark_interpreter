@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://pcap-security-analyzer.local/schemas/report-1.2.json",
+  "$id": "https://pcap-security-analyzer.local/schemas/report-1.4.json",
   "title": "SecurityReport",
   "type": "object",
   "additionalProperties": false,
@@ -12,6 +12,9 @@
     "analysis_status",
     "capture",
     "executive_summary",
+    "conclusion",
+    "next_steps",
+    "integrity_sha256",
     "summary",
     "analyzers",
     "activities",
@@ -22,10 +25,11 @@
     "indicators",
     "enrichments",
     "assets",
+    "validations",
     "limitations"
   ],
   "properties": {
-    "schema_version": { "const": "1.2" },
+    "schema_version": { "const": "1.4" },
     "report_id": { "type": "string", "format": "uuid" },
     "generated_at": { "type": "string", "format": "date-time" },
     "analysis_id": { "type": "string", "format": "uuid" },
@@ -34,6 +38,13 @@
     },
     "capture": { "$ref": "#/$defs/capture" },
     "executive_summary": { "type": "string", "minLength": 1 },
+    "conclusion": { "type": "string", "minLength": 1 },
+    "next_steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "integrity_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "summary": { "$ref": "#/$defs/summary" },
     "analyzers": {
       "type": "array",
@@ -70,6 +81,10 @@
     "assets": {
       "type": "array",
       "items": { "$ref": "#/$defs/asset_context" }
+    },
+    "validations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/validation" }
     },
     "limitations": {
       "type": "array",
@@ -312,6 +327,66 @@
         "criticality": { "type": ["string", "null"] },
         "labels": { "type": "array", "items": { "type": "string" } },
         "provenance": { "type": "string" }
+      }
+    },
+    "validation_audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "validation_id", "action", "actor", "occurred_at", "details"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "validation_id": { "type": "string", "format": "uuid" },
+        "action": { "type": "string" },
+        "actor": { "type": "string" },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "details": { "type": "object" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "analysis_id", "finding_id", "validator", "target_ip", "target_port",
+        "status", "policy_allowed", "policy_reason", "scope_reference", "requested_by",
+        "approved_by", "created_at", "approved_at", "started_at", "completed_at",
+        "technical_result", "analyst_conclusion", "result_summary", "review_rationale",
+        "reviewed_by", "reviewed_at", "audit"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "analysis_id": { "type": "string", "format": "uuid" },
+        "finding_id": { "type": "string", "format": "uuid" },
+        "validator": { "const": "tcp-connect" },
+        "target_ip": { "type": "string" },
+        "target_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "status": {
+          "enum": [
+            "awaiting_approval", "blocked", "approved", "running", "completed", "failed"
+          ]
+        },
+        "policy_allowed": { "type": "boolean" },
+        "policy_reason": { "type": "string" },
+        "scope_reference": { "type": "string" },
+        "requested_by": { "type": "string" },
+        "approved_by": { "type": ["string", "null"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "approved_at": { "type": ["string", "null"], "format": "date-time" },
+        "started_at": { "type": ["string", "null"], "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" },
+        "technical_result": {
+          "enum": ["not_executed", "reachable", "not_reachable", "error"]
+        },
+        "analyst_conclusion": {
+          "enum": ["pending", "confirmed", "false_positive", "inconclusive"]
+        },
+        "result_summary": { "type": ["string", "null"] },
+        "review_rationale": { "type": ["string", "null"] },
+        "reviewed_by": { "type": ["string", "null"] },
+        "reviewed_at": { "type": ["string", "null"], "format": "date-time" },
+        "audit": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/validation_audit" }
+        }
       }
     }
   }

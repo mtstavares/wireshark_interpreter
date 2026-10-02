@@ -1,0 +1,6 @@
+FROM python:3.12-alpine
+
+WORKDIR /validator
+COPY backend/app/validation_worker.py ./validation_worker.py
+USER 65532:65532
+ENTRYPOINT ["python", "-I", "/validator/validation_worker.py"]

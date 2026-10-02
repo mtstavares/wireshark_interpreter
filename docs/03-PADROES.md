@@ -85,7 +85,11 @@ Número de `0.0` a `1.0`, calculado por detector. A LLM pode sugerir ajuste, mas
 
 ### Evidência
 
-Todo finding DEVE conter pelo menos uma referência. Evidências podem apontar para `event_id`, `flow_id`, `packet_number`, log e regra. Trechos de payload são minimizados e redigidos quando contêm segredos.
+Todo finding DEVE conter pelo menos uma referência. Evidências podem apontar para
+`event_id`, `flow_id`, `packet_number`, log e regra. Payload integral não é
+persistido. A exceção explícita é o modo forense de autenticação em texto claro:
+usuário e senha extraídos pelos dissectors são preservados para o relatório e
+devem ser tratados como evidência sensível.
 
 ## Referenciais de segurança
 
@@ -103,7 +107,8 @@ Todo finding DEVE conter pelo menos uma referência. Evidências podem apontar p
 - Processos recebem argumentos como lista e usam caminhos internos resolvidos.
 - Arquivos extraídos não são executados nem abertos por aplicações do host.
 - Containers executam sem privilégios, com filesystem temporário e limites de recursos.
-- Segredos ficam em variáveis de ambiente ou cofre; nunca em logs ou repositório.
+- Segredos operacionais ficam em variáveis de ambiente ou cofre; nunca em logs ou
+  repositório. Credenciais observadas no PCAP podem existir no banco e relatório.
 - Saída externa é negada por padrão nos workers de análise.
 - Relatórios HTML escapam todo conteúdo originado da captura.
 - Dados enviados à LLM são minimizados e passam por redação de credenciais.
@@ -112,7 +117,8 @@ Todo finding DEVE conter pelo menos uma referência. Evidências podem apontar p
 
 - Logs estruturados em JSON.
 - Campos mínimos: `timestamp`, `level`, `service`, `analysis_id`, `event`, `duration_ms`.
-- Nunca registrar PCAP, payload integral, senha, token ou chave de API.
+- Nunca registrar em logs PCAP, payload integral, senha, token ou chave de API.
+  Senhas capturadas ficam restritas aos eventos, findings e relatórios forenses.
 - Métricas: duração por fase, arquivos processados, alertas, falhas, tokens, cache hit, custo estimado e versão de ferramenta.
 - Cada execução registra versões de Zeek, Suricata, regras, detectores, modelo e prompt.
 

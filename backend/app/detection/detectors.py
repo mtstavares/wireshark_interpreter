@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from ipaddress import ip_address, ip_network
 from itertools import pairwise
+from pathlib import Path
 from typing import Any, ClassVar, Protocol, cast
 from uuid import NAMESPACE_URL, uuid5
 
@@ -19,15 +22,14 @@ from backend.app.domain.findings import (
 )
 from backend.app.domain.network import NetworkEvent, NetworkFlow
 
-DETECTOR_VERSION = "1.0.0"
+DETECTOR_VERSION = "1.1.0"
 MAX_EVIDENCE = 25
 
 
 class Detector(Protocol):
     name: str
 
-    def detect(self, context: DetectionContext) -> list[Finding]:
-        ...
+    def detect(self, context: DetectionContext) -> list[Finding]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,9 +192,7 @@ class AuthenticationDetector:
             username = _username(success) or "<unknown>"
             key = (success.src_ip, success.dest_ip, application, username)
             preceding_failures = [
-                event
-                for event in by_account.get(key, [])
-                if _occurred_before(event, success)
+                event for event in by_account.get(key, []) if _occurred_before(event, success)
             ]
             if not preceding_failures:
                 continue
@@ -239,9 +239,7 @@ class AuthenticationDetector:
                     title="Possível password spraying",
                     category="credential-access",
                     severity=Severity.HIGH,
-                    confidence=_threshold_confidence(
-                        len(users), self._config.password_spray_users
-                    ),
+                    confidence=_threshold_confidence(len(users), self._config.password_spray_users),
                     summary=(
                         f"O IP {source_ip} tentou autenticar {len(users)} usuários diferentes "
                         f"via {application.upper()} no IP {destination_ip}, comportamento "
@@ -257,6 +255,169 @@ class AuthenticationDetector:
                         "Verifique contas que tiveram sucesso após as falhas.",
                     ],
                     mitre_attack=["T1110.003"],
+                )
+            )
+        return findings
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialAuthorizationRule:
+    destination_ip: str
+    service: str
+    username: str
+    source_networks: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialAuthorizationPolicy:
+    default: str = "unknown"
+    rules: tuple[CredentialAuthorizationRule, ...] = ()
+
+    @classmethod
+    def load(cls, path: Path | None) -> CredentialAuthorizationPolicy:
+        if path is None:
+            return cls()
+        raw_object = cast(object, json.loads(path.read_text(encoding="utf-8")))
+        if not isinstance(raw_object, Mapping):
+            raise ValueError("Credential policy must be a JSON object")
+        raw = cast(Mapping[str, object], raw_object)
+        default = str(raw.get("default", "unknown")).lower()
+        if default not in {"unknown", "deny"}:
+            raise ValueError("Credential policy default must be 'unknown' or 'deny'")
+        parsed: list[CredentialAuthorizationRule] = []
+        raw_rules = raw.get("rules", [])
+        if not isinstance(raw_rules, list):
+            raise ValueError("Credential policy rules must be a list")
+        for item in cast(list[object], raw_rules):
+            if not isinstance(item, Mapping):
+                raise ValueError("Each credential policy rule must be an object")
+            rule = cast(Mapping[str, object], item)
+            networks = rule.get("source_networks", [])
+            if not isinstance(networks, list):
+                raise ValueError("source_networks must be a list")
+            network_values = tuple(str(value) for value in cast(list[object], networks))
+            for network in network_values:
+                ip_network(network, strict=False)
+            parsed.append(
+                CredentialAuthorizationRule(
+                    destination_ip=str(rule["destination_ip"]),
+                    service=str(rule["service"]).lower(),
+                    username=str(rule["username"]),
+                    source_networks=network_values,
+                )
+            )
+        return cls(default=default, rules=tuple(parsed))
+
+    def decision(self, event: NetworkEvent, username: str | None) -> str:
+        if username is None or event.dest_ip is None:
+            return "unknown"
+        candidates = [
+            rule
+            for rule in self.rules
+            if rule.destination_ip == event.dest_ip
+            and rule.service == (event.application or "").lower()
+            and rule.username == username
+        ]
+        for rule in candidates:
+            if not rule.source_networks:
+                return "authorized"
+            if event.src_ip and any(
+                ip_address(event.src_ip) in ip_network(network, strict=False)
+                for network in rule.source_networks
+            ):
+                return "authorized"
+        return "unauthorized" if self.default == "deny" else "unknown"
+
+
+class CleartextCredentialDetector:
+    name = "cleartext-credential"
+
+    def __init__(self, policy: CredentialAuthorizationPolicy | None = None) -> None:
+        self._policy = policy or CredentialAuthorizationPolicy()
+
+    def detect(self, context: DetectionContext) -> list[Finding]:
+        findings: list[Finding] = []
+        for event in context.events:
+            if event.event_type != "authentication":
+                continue
+            username = _detail_text(event, "username")
+            password = _detail_text(event, "password")
+            outcome = _detail_text(event, "result") or "unknown"
+            if username is None and password is None:
+                continue
+            authorization = self._policy.decision(event, username)
+            unauthorized_success = outcome == "success" and authorization == "unauthorized"
+            application = (event.application or "unknown").upper()
+            credential = _credential_description(username, password)
+            if outcome == "success":
+                title = "Autenticação em texto claro bem-sucedida"
+                statement = (
+                    f"O IP {event.src_ip} autenticou com sucesso via {application} no IP "
+                    f"{event.dest_ip}, usando {credential}."
+                )
+                assertion = AssertionStatus.OBSERVED
+                confidence = 0.98
+            elif outcome == "failure":
+                title = "Tentativa de autenticação em texto claro malsucedida"
+                statement = (
+                    f"O IP {event.src_ip} tentou autenticar via {application} no IP "
+                    f"{event.dest_ip}, usando {credential}, mas o serviço recusou a tentativa."
+                )
+                assertion = AssertionStatus.OBSERVED
+                confidence = 0.98
+            elif outcome == "possible":
+                title = "Credencial HTTP observada em texto claro"
+                status = _detail_text(event, "http_status") or "desconhecido"
+                statement = (
+                    f"O IP {event.src_ip} enviou via HTTP {credential} ao IP "
+                    f"{event.dest_ip}, que respondeu com HTTP {status}; esse código isolado "
+                    "não comprova sucesso do login."
+                )
+                assertion = AssertionStatus.INFERRED
+                confidence = 0.80
+            else:
+                title = "Credencial observada em texto claro"
+                statement = (
+                    f"O IP {event.src_ip} enviou via {application} {credential} ao IP "
+                    f"{event.dest_ip}; a captura não contém resposta conclusiva sobre o login."
+                )
+                assertion = AssertionStatus.OBSERVED
+                confidence = 0.90
+            if outcome == "success" and authorization == "authorized":
+                statement += " O acesso corresponde à política local de autorização."
+            elif unauthorized_success:
+                title = "Autenticação não autorizada em texto claro"
+                statement += " A origem ou conta não corresponde à política local de autorização."
+            if password is not None:
+                statement += (
+                    " A senha trafegou sem criptografia e está reproduzida nesta evidência."
+                )
+            else:
+                statement += " O identificador de conta trafegou sem criptografia."
+            findings.append(
+                _event_finding(
+                    context,
+                    self.name,
+                    key=event.id,
+                    title=title,
+                    category="credential-access",
+                    severity=Severity.CRITICAL if unauthorized_success else Severity.HIGH,
+                    confidence=confidence,
+                    assertion_status=assertion,
+                    summary=statement,
+                    events=[event],
+                    source_ip=event.src_ip,
+                    destination_ip=event.dest_ip,
+                    destination_port=event.dest_port,
+                    mitigations=[
+                        "Desabilite o protocolo em texto claro e migre para uma "
+                        "alternativa criptografada.",
+                        "Redefina a credencial exposta e investigue sua reutilização "
+                        "em outros sistemas.",
+                        "Restrinja o acesso ao PCAP e aos relatórios, pois eles podem "
+                        "conter a senha capturada.",
+                    ],
+                    mitre_attack=["T1040"],
                 )
             )
         return findings
@@ -523,11 +684,15 @@ class SignatureAlertDetector:
         return findings
 
 
-def default_detectors(config: DetectorConfig | None = None) -> list[Detector]:
+def default_detectors(
+    config: DetectorConfig | None = None,
+    credential_policy: CredentialAuthorizationPolicy | None = None,
+) -> list[Detector]:
     detector_config = config or DetectorConfig()
     return [
         PortScanDetector(detector_config),
         AuthenticationDetector(detector_config),
+        CleartextCredentialDetector(credential_policy),
         CleartextProtocolDetector(),
         LegacySnmpDetector(),
         DnsAnomalyDetector(detector_config),
@@ -677,6 +842,19 @@ def _username(event: NetworkEvent) -> str | None:
         if key.endswith(("user", "username", "account")) and value:
             return str(value)[:120]
     return None
+
+
+def _detail_text(event: NetworkEvent, name: str) -> str | None:
+    value = event.details.get(name)
+    return str(value) if value is not None and str(value) else None
+
+
+def _credential_description(username: str | None, password: str | None) -> str:
+    if username is not None and password is not None:
+        return f'o usuário "{username}" e a senha "{password}"'
+    if username is not None:
+        return f'o usuário "{username}"'
+    return f'a senha "{password}"'
 
 
 def _occurred_before(left: NetworkEvent, right: NetworkEvent) -> bool:

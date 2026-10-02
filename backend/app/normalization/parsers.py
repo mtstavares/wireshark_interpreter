@@ -10,6 +10,7 @@ from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid5
 
 from backend.app.domain.network import NetworkEvent, NetworkFlow
+from backend.app.normalization.authentication import TsharkAuthenticationTracker
 
 DETAIL_KEYS = {
     "uid",
@@ -73,6 +74,7 @@ def parse_tshark_directory(
         return [], []
     flows_by_key: dict[tuple[tuple[str, int], tuple[str, int], str], NetworkFlow] = {}
     events: list[NetworkEvent] = []
+    authentication = TsharkAuthenticationTracker(analysis_id)
     with path.open(encoding="utf-8", errors="replace", newline="") as source:
         for index, row in enumerate(csv.DictReader(source, delimiter="\t"), start=1):
             if index % 4096 == 0:
@@ -80,7 +82,20 @@ def parse_tshark_directory(
             flow = _tshark_packet_flow(analysis_id, row, index)
             if flow is not None:
                 _aggregate_packet(flows_by_key, flow)
-            events.append(_tshark_packet_event(analysis_id, row, index))
+            packet_event = _tshark_packet_event(analysis_id, row, index)
+            events.append(packet_event)
+            events.extend(
+                authentication.consume(
+                    row,
+                    index=index,
+                    occurred_at=packet_event.occurred_at,
+                    src_ip=packet_event.src_ip,
+                    src_port=packet_event.src_port,
+                    dest_ip=packet_event.dest_ip,
+                    dest_port=packet_event.dest_port,
+                )
+            )
+    events.extend(authentication.finish())
     _check_deadline(deadline)
     return list(flows_by_key.values()), events
 
@@ -97,9 +112,7 @@ def merge_flows(
         key=lambda flow: (priority.get(flow.sources[0], 99), flow.start_time),
     )
     merged: list[NetworkFlow] = []
-    flows_by_key: dict[
-        tuple[tuple[str, int], tuple[str, int], str], list[NetworkFlow]
-    ] = {}
+    flows_by_key: dict[tuple[tuple[str, int], tuple[str, int], str], list[NetworkFlow]] = {}
 
     for index, candidate in enumerate(ordered, start=1):
         if index % 4096 == 0:
@@ -129,9 +142,7 @@ def merge_flows(
             key=lambda value: priority.get(value, 99),
         )
         match.external_ids = sorted(set(match.external_ids + candidate.external_ids))
-        match.evidence_refs = _merge_evidence_refs(
-            match.evidence_refs, candidate.evidence_refs
-        )
+        match.evidence_refs = _merge_evidence_refs(match.evidence_refs, candidate.evidence_refs)
     _check_deadline(deadline)
     return merged
 
@@ -250,16 +261,12 @@ def _zeek_event(
     )
 
 
-def _suricata_flow(
-    analysis_id: str, item: Mapping[str, Any], reference: str
-) -> NetworkFlow | None:
+def _suricata_flow(analysis_id: str, item: Mapping[str, Any], reference: str) -> NetworkFlow | None:
     src_ip = _text(item.get("src_ip"))
     dest_ip = _text(item.get("dest_ip"))
     raw_flow_data = item.get("flow")
     flow_data: Mapping[str, Any] = (
-        cast(Mapping[str, Any], raw_flow_data)
-        if isinstance(raw_flow_data, Mapping)
-        else {}
+        cast(Mapping[str, Any], raw_flow_data) if isinstance(raw_flow_data, Mapping) else {}
     )
     started = _timestamp(flow_data.get("start") or item.get("timestamp"))
     ended = _timestamp(flow_data.get("end")) or started
@@ -286,9 +293,7 @@ def _suricata_flow(
     )
 
 
-def _suricata_event(
-    analysis_id: str, item: Mapping[str, Any], reference: str
-) -> NetworkEvent:
+def _suricata_event(analysis_id: str, item: Mapping[str, Any], reference: str) -> NetworkEvent:
     event_type = _text(item.get("event_type")) or "unknown"
     details: dict[str, Any] = {}
     for section in ("alert", "dns", "http", "tls", "fileinfo", "ssh"):
@@ -313,9 +318,7 @@ def _suricata_event(
     )
 
 
-def _tshark_packet_flow(
-    analysis_id: str, row: Mapping[str, Any], index: int
-) -> NetworkFlow | None:
+def _tshark_packet_flow(analysis_id: str, row: Mapping[str, Any], index: int) -> NetworkFlow | None:
     transport = "tcp" if row.get("tcp.srcport") else "udp" if row.get("udp.srcport") else "ip"
     src_ip = _text(row.get("ip.src") or row.get("ipv6.src"))
     dest_ip = _text(row.get("ip.dst") or row.get("ipv6.dst"))
@@ -345,9 +348,7 @@ def _tshark_packet_flow(
     )
 
 
-def _tshark_packet_event(
-    analysis_id: str, row: Mapping[str, Any], index: int
-) -> NetworkEvent:
+def _tshark_packet_event(analysis_id: str, row: Mapping[str, Any], index: int) -> NetworkEvent:
     transport = "tcp" if row.get("tcp.srcport") else "udp" if row.get("udp.srcport") else None
     reference = f"tshark/stdout.log:packet:{index}"
     return NetworkEvent(
@@ -371,9 +372,9 @@ def _tshark_packet_event(
 def _same_communication(left: NetworkFlow, right: NetworkFlow) -> bool:
     if not _same_tuple(left, right):
         return False
-    return (
-        left.start_time <= right.end_time and right.start_time <= left.end_time
-    ) or abs((left.start_time - right.start_time).total_seconds()) <= 2
+    return (left.start_time <= right.end_time and right.start_time <= left.end_time) or abs(
+        (left.start_time - right.start_time).total_seconds()
+    ) <= 2
 
 
 def _same_tuple(left: NetworkFlow, right: NetworkFlow) -> bool:
@@ -424,6 +425,7 @@ def _tshark_details(row: Mapping[str, Any], index: int) -> dict[str, Any]:
         "tcp_ack": _text(row.get("tcp.flags.ack")),
         "tcp_reset": _text(row.get("tcp.flags.reset")),
         "tcp_retransmission": _text(row.get("tcp.analysis.retransmission")),
+        "tcp_stream": _int(row.get("tcp.stream")),
         "snmp_version": _int(row.get("snmp.version")),
         "dns_query": _text(row.get("dns.qry.name")),
     }

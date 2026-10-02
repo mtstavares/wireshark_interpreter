@@ -5,7 +5,10 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import (
     DateTime,
     Float,
@@ -20,7 +23,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.engine import URL, Engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from backend.app.domain.analyses import (
     Analysis,
@@ -47,6 +50,13 @@ from backend.app.domain.network import (
     NormalizationStatus,
     NormalizationSummary,
     ServiceInventory,
+)
+from backend.app.domain.validation import (
+    AnalystConclusion,
+    Validation,
+    ValidationAuditEntry,
+    ValidationStatus,
+    ValidationTechnicalResult,
 )
 
 
@@ -83,9 +93,7 @@ class AnalyzerRunRecord(Base):
     __tablename__ = "analyzer_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    analysis_id: Mapped[str] = mapped_column(
-        ForeignKey("analyses.id"), index=True, nullable=False
-    )
+    analysis_id: Mapped[str] = mapped_column(ForeignKey("analyses.id"), index=True, nullable=False)
     analyzer: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     version: Mapped[str | None] = mapped_column(String(300))
@@ -113,9 +121,7 @@ class NetworkFlowRecord(Base):
     __tablename__ = "network_flows"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    analysis_id: Mapped[str] = mapped_column(
-        ForeignKey("analyses.id"), index=True, nullable=False
-    )
+    analysis_id: Mapped[str] = mapped_column(ForeignKey("analyses.id"), index=True, nullable=False)
     sources_json: Mapped[str] = mapped_column(Text, nullable=False)
     external_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -137,9 +143,7 @@ class NetworkEventRecord(Base):
     __tablename__ = "network_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    analysis_id: Mapped[str] = mapped_column(
-        ForeignKey("analyses.id"), index=True, nullable=False
-    )
+    analysis_id: Mapped[str] = mapped_column(ForeignKey("analyses.id"), index=True, nullable=False)
     source: Mapped[str] = mapped_column(String(30), nullable=False)
     event_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -171,9 +175,7 @@ class FindingRecord(Base):
     __tablename__ = "findings"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    analysis_id: Mapped[str] = mapped_column(
-        ForeignKey("analyses.id"), index=True, nullable=False
-    )
+    analysis_id: Mapped[str] = mapped_column(ForeignKey("analyses.id"), index=True, nullable=False)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     category: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
     severity: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
@@ -196,9 +198,7 @@ class EnrichmentRecord(Base):
     __tablename__ = "enrichments"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    analysis_id: Mapped[str] = mapped_column(
-        ForeignKey("analyses.id"), index=True, nullable=False
-    )
+    analysis_id: Mapped[str] = mapped_column(ForeignKey("analyses.id"), index=True, nullable=False)
     finding_id: Mapped[str | None] = mapped_column(String(36), index=True)
     subject_type: Mapped[str] = mapped_column(String(30), nullable=False)
     subject_value: Mapped[str] = mapped_column(String(300), index=True, nullable=False)
@@ -216,6 +216,46 @@ class EnrichmentRecord(Base):
     influence: Mapped[str] = mapped_column(String(30), nullable=False)
 
 
+class ValidationRecord(Base):
+    __tablename__ = "validations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    analysis_id: Mapped[str] = mapped_column(ForeignKey("analyses.id"), index=True, nullable=False)
+    finding_id: Mapped[str] = mapped_column(ForeignKey("findings.id"), index=True, nullable=False)
+    validator: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_ip: Mapped[str] = mapped_column(String(45), nullable=False)
+    target_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), index=True, nullable=False)
+    policy_allowed: Mapped[int] = mapped_column(Integer, nullable=False)
+    policy_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    scope_reference: Mapped[str] = mapped_column(String(300), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(120), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    technical_result: Mapped[str] = mapped_column(String(30), nullable=False)
+    analyst_conclusion: Mapped[str] = mapped_column(String(30), nullable=False)
+    result_summary: Mapped[str | None] = mapped_column(Text)
+    review_rationale: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[str | None] = mapped_column(String(120))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ValidationAuditRecord(Base):
+    __tablename__ = "validation_audit"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    validation_id: Mapped[str] = mapped_column(
+        ForeignKey("validations.id"), index=True, nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(60), nullable=False)
+    actor: Mapped[str] = mapped_column(String(120), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 def create_database_engine(database_path: Path) -> Engine:
     url = URL.create("sqlite+pysqlite", database=str(database_path))
     engine = create_engine(
@@ -229,7 +269,12 @@ def create_database_engine(database_path: Path) -> Engine:
 
 
 def initialize_database(engine: Engine) -> None:
-    Base.metadata.create_all(engine)
+    migrations_dir = Path(__file__).resolve().parents[1] / "migrations"
+    config = Config()
+    config.set_main_option("script_location", str(migrations_dir))
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
 
 
 class CaptureRepository:
@@ -424,6 +469,26 @@ class AnalysisRepository:
                 )
             )
         return len(analysis_ids)
+
+    def cancel(self, analysis_id: str, canceled_at: datetime) -> None:
+        diagnostic = "Analysis canceled by user"
+        with self._session_factory.begin() as session:
+            record = session.get(AnalysisRecord, analysis_id)
+            if record is None:
+                raise KeyError(analysis_id)
+            record.status = AnalysisStatus.CANCELED.value
+            record.completed_at = canceled_at
+            record.error_message = diagnostic
+            session.execute(
+                update(AnalyzerRunRecord)
+                .where(
+                    AnalyzerRunRecord.analysis_id == analysis_id,
+                    AnalyzerRunRecord.status.in_(
+                        [AnalyzerStatus.PENDING.value, AnalyzerStatus.RUNNING.value]
+                    ),
+                )
+                .values(status=AnalyzerStatus.CANCELED.value, diagnostic=diagnostic)
+            )
 
     def update_run(
         self,
@@ -633,7 +698,15 @@ class NetworkRepository:
                     application=key[3],
                     flow_count=count,
                 )
-                for key, count in sorted(services.items())
+                for key, count in sorted(
+                    services.items(),
+                    key=lambda item: (
+                        item[0][0],
+                        item[0][1],
+                        item[0][2],
+                        item[0][3] or "",
+                    ),
+                )
             ],
         )
 
@@ -979,4 +1052,277 @@ def _enrichment_to_domain(record: EnrichmentRecord) -> Enrichment:
         expires_at=_as_utc(record.expires_at),
         cache_hit=bool(record.cache_hit),
         influence=record.influence,
+    )
+
+
+class ValidationRepository:
+    def __init__(self, engine: Engine) -> None:
+        self._session_factory = sessionmaker(engine, expire_on_commit=False)
+
+    def create(
+        self,
+        validation: Validation,
+        *,
+        action: str,
+        actor: str,
+        details: dict[str, str | int | bool | None],
+    ) -> Validation:
+        with self._session_factory.begin() as session:
+            session.add(_validation_record(validation))
+            _add_validation_audit(
+                session,
+                validation.id,
+                action,
+                actor,
+                validation.created_at,
+                details,
+            )
+        created = self.get(validation.id)
+        if created is None:
+            raise RuntimeError("Validation was not persisted")
+        return created
+
+    def get(self, validation_id: str) -> Validation | None:
+        with self._session_factory() as session:
+            record = session.get(ValidationRecord, validation_id)
+            if record is None:
+                return None
+            audits = session.scalars(
+                select(ValidationAuditRecord)
+                .where(ValidationAuditRecord.validation_id == validation_id)
+                .order_by(ValidationAuditRecord.occurred_at, ValidationAuditRecord.id)
+            ).all()
+            return _validation_to_domain(record, audits)
+
+    def list(self, analysis_id: str, limit: int = 1000) -> list[Validation]:
+        with self._session_factory() as session:
+            ids = session.scalars(
+                select(ValidationRecord.id)
+                .where(ValidationRecord.analysis_id == analysis_id)
+                .order_by(ValidationRecord.created_at.desc())
+                .limit(limit)
+            ).all()
+        return [item for validation_id in ids if (item := self.get(validation_id)) is not None]
+
+    def approve(self, validation_id: str, actor: str, approved_at: datetime) -> Validation:
+        with self._session_factory.begin() as session:
+            record = _required_validation(session, validation_id)
+            record.status = ValidationStatus.APPROVED.value
+            record.approved_by = actor
+            record.approved_at = approved_at
+            _add_validation_audit(
+                session,
+                validation_id,
+                "approved",
+                actor,
+                approved_at,
+                {"approval_phrase_verified": True},
+            )
+        return self._required_result(validation_id)
+
+    def block(self, validation_id: str, reason: str, occurred_at: datetime) -> Validation:
+        with self._session_factory.begin() as session:
+            record = _required_validation(session, validation_id)
+            record.status = ValidationStatus.BLOCKED.value
+            record.policy_allowed = 0
+            record.policy_reason = reason
+            record.completed_at = occurred_at
+            _add_validation_audit(
+                session,
+                validation_id,
+                "blocked",
+                "policy-engine",
+                occurred_at,
+                {"reason": reason},
+            )
+        return self._required_result(validation_id)
+
+    def start(self, validation_id: str, started_at: datetime) -> None:
+        with self._session_factory.begin() as session:
+            record = _required_validation(session, validation_id)
+            record.status = ValidationStatus.RUNNING.value
+            record.started_at = started_at
+            _add_validation_audit(
+                session,
+                validation_id,
+                "execution_started",
+                "validation-runner",
+                started_at,
+                {"validator": record.validator},
+            )
+
+    def complete(
+        self,
+        validation_id: str,
+        result: ValidationTechnicalResult,
+        summary: str,
+        completed_at: datetime,
+        *,
+        failed: bool = False,
+    ) -> Validation:
+        with self._session_factory.begin() as session:
+            record = _required_validation(session, validation_id)
+            record.status = (
+                ValidationStatus.FAILED.value if failed else ValidationStatus.COMPLETED.value
+            )
+            record.technical_result = result.value
+            record.result_summary = summary[:4000]
+            record.completed_at = completed_at
+            _add_validation_audit(
+                session,
+                validation_id,
+                "execution_failed" if failed else "execution_completed",
+                "validation-runner",
+                completed_at,
+                {"technical_result": result.value, "summary": summary[:1000]},
+            )
+        return self._required_result(validation_id)
+
+    def review(
+        self,
+        validation_id: str,
+        conclusion: AnalystConclusion,
+        rationale: str,
+        actor: str,
+        reviewed_at: datetime,
+    ) -> Validation:
+        with self._session_factory.begin() as session:
+            record = _required_validation(session, validation_id)
+            record.analyst_conclusion = conclusion.value
+            record.review_rationale = rationale[:4000]
+            record.reviewed_by = actor
+            record.reviewed_at = reviewed_at
+            _add_validation_audit(
+                session,
+                validation_id,
+                "analyst_reviewed",
+                actor,
+                reviewed_at,
+                {"conclusion": conclusion.value, "rationale": rationale[:1000]},
+            )
+        return self._required_result(validation_id)
+
+    def recover_interrupted(self, recovered_at: datetime) -> int:
+        statuses = (ValidationStatus.APPROVED.value, ValidationStatus.RUNNING.value)
+        with self._session_factory.begin() as session:
+            records = session.scalars(
+                select(ValidationRecord).where(ValidationRecord.status.in_(statuses))
+            ).all()
+            for record in records:
+                record.status = ValidationStatus.FAILED.value
+                record.technical_result = ValidationTechnicalResult.ERROR.value
+                record.result_summary = "Validation interrupted by an application restart"
+                record.completed_at = recovered_at
+                _add_validation_audit(
+                    session,
+                    record.id,
+                    "interrupted",
+                    "application",
+                    recovered_at,
+                    {"reason": "application_restart"},
+                )
+        return len(records)
+
+    def _required_result(self, validation_id: str) -> Validation:
+        validation = self.get(validation_id)
+        if validation is None:
+            raise KeyError(validation_id)
+        return validation
+
+
+def _validation_record(item: Validation) -> ValidationRecord:
+    return ValidationRecord(
+        id=item.id,
+        analysis_id=item.analysis_id,
+        finding_id=item.finding_id,
+        validator=item.validator,
+        target_ip=item.target_ip,
+        target_port=item.target_port,
+        status=item.status.value,
+        policy_allowed=int(item.policy_allowed),
+        policy_reason=item.policy_reason,
+        scope_reference=item.scope_reference,
+        requested_by=item.requested_by,
+        approved_by=item.approved_by,
+        created_at=item.created_at,
+        approved_at=item.approved_at,
+        started_at=item.started_at,
+        completed_at=item.completed_at,
+        technical_result=item.technical_result.value,
+        analyst_conclusion=item.analyst_conclusion.value,
+        result_summary=item.result_summary,
+        review_rationale=item.review_rationale,
+        reviewed_by=item.reviewed_by,
+        reviewed_at=item.reviewed_at,
+    )
+
+
+def _validation_to_domain(
+    record: ValidationRecord, audits: Sequence[ValidationAuditRecord]
+) -> Validation:
+    return Validation(
+        id=record.id,
+        analysis_id=record.analysis_id,
+        finding_id=record.finding_id,
+        validator=record.validator,
+        target_ip=record.target_ip,
+        target_port=record.target_port,
+        status=ValidationStatus(record.status),
+        policy_allowed=bool(record.policy_allowed),
+        policy_reason=record.policy_reason,
+        scope_reference=record.scope_reference,
+        requested_by=record.requested_by,
+        approved_by=record.approved_by,
+        created_at=_required_utc(record.created_at),
+        approved_at=_as_utc(record.approved_at),
+        started_at=_as_utc(record.started_at),
+        completed_at=_as_utc(record.completed_at),
+        technical_result=ValidationTechnicalResult(record.technical_result),
+        analyst_conclusion=AnalystConclusion(record.analyst_conclusion),
+        result_summary=record.result_summary,
+        review_rationale=record.review_rationale,
+        reviewed_by=record.reviewed_by,
+        reviewed_at=_as_utc(record.reviewed_at),
+        audit=[
+            ValidationAuditEntry(
+                id=audit.id,
+                validation_id=audit.validation_id,
+                action=audit.action,
+                actor=audit.actor,
+                occurred_at=_required_utc(audit.occurred_at),
+                details={
+                    str(key): value
+                    for key, value in json.loads(audit.details_json).items()
+                    if isinstance(value, (str, int, bool)) or value is None
+                },
+            )
+            for audit in audits
+        ],
+    )
+
+
+def _required_validation(session: Session, validation_id: str) -> ValidationRecord:
+    record = session.get(ValidationRecord, validation_id)
+    if record is None:
+        raise KeyError(validation_id)
+    return record
+
+
+def _add_validation_audit(
+    session: Session,
+    validation_id: str,
+    action: str,
+    actor: str,
+    occurred_at: datetime,
+    details: dict[str, str | int | bool | None],
+) -> None:
+    session.add(
+        ValidationAuditRecord(
+            id=str(uuid4()),
+            validation_id=validation_id,
+            action=action,
+            actor=actor,
+            occurred_at=occurred_at,
+            details_json=json.dumps(details, ensure_ascii=False, sort_keys=True),
+        )
     )

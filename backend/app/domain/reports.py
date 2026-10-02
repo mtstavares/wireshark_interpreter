@@ -7,6 +7,7 @@ from backend.app.domain.analyses import AnalysisStatus, AnalyzerStatus
 from backend.app.domain.enrichment import AssetContext, Enrichment
 from backend.app.domain.findings import AssertionStatus, FindingEvidence, Severity
 from backend.app.domain.network import HostInventory, ServiceInventory
+from backend.app.domain.validation import Validation
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +100,9 @@ class SecurityReport:
     analysis_status: AnalysisStatus
     capture: ReportCapture
     executive_summary: str
+    conclusion: str
+    next_steps: list[str]
+    integrity_sha256: str
     summary: ReportSummary
     analyzers: list[ReportAnalyzer]
     activities: list[ReportActivity]
@@ -109,4 +113,5 @@ class SecurityReport:
     indicators: list[ReportIndicator]
     enrichments: list[Enrichment]
     assets: list[AssetContext]
+    validations: list[Validation]
     limitations: list[str] = field(default_factory=list[str])

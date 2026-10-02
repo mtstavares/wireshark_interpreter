@@ -20,6 +20,7 @@ PCAP_MAGIC_BYTES = {
     bytes.fromhex("a1b23c4d"),
 }
 PCAPNG_MAGIC_BYTES = bytes.fromhex("0a0d0d0a")
+HEADER_INSPECTION_BYTES = 28
 
 
 class CaptureIngestionError(Exception):
@@ -43,8 +44,19 @@ class CaptureTooLargeError(CaptureIngestionError):
 def detect_capture_format(header: bytes) -> CaptureFormat:
     magic = header[:4]
     if magic in PCAP_MAGIC_BYTES:
+        if len(header) < 24:
+            raise UnsupportedCaptureError("The PCAP global header is truncated")
+        little_endian = magic in {bytes.fromhex("d4c3b2a1"), bytes.fromhex("4d3cb2a1")}
+        expected_version = bytes.fromhex("02000400" if little_endian else "00020004")
+        if header[4:8] != expected_version:
+            raise UnsupportedCaptureError("The PCAP version header is invalid")
         return CaptureFormat.PCAP
     if magic == PCAPNG_MAGIC_BYTES:
+        if len(header) < 28 or header[8:12] not in {
+            bytes.fromhex("4d3c2b1a"),
+            bytes.fromhex("1a2b3c4d"),
+        }:
+            raise UnsupportedCaptureError("The PCAPNG section header is truncated or invalid")
         return CaptureFormat.PCAPNG
     raise UnsupportedCaptureError("The file signature is not PCAP or PCAPNG")
 
@@ -87,8 +99,8 @@ class IngestCaptureService:
                         raise CaptureTooLargeError(
                             f"The maximum upload size is {self._max_upload_bytes} bytes"
                         )
-                    if len(header) < 4:
-                        header = (header + chunk)[:4]
+                    if len(header) < HEADER_INSPECTION_BYTES:
+                        header = (header + chunk)[:HEADER_INSPECTION_BYTES]
                     digest.update(chunk)
                     destination.write(chunk)
 

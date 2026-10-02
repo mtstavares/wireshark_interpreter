@@ -46,12 +46,16 @@ Nos estudos, o projeto permite:
   - força bruta, password spraying e sucesso após falhas;
   - DNS suspeito e possível beaconing;
   - protocolos em texto claro e versões legadas de SNMP;
+  - credenciais e resultado de autenticação em FTP, POP3, IMAP, SMTP, HTTP Basic
+    e Telnet, quando a captura contém evidência suficiente;
   - alertas provenientes do Suricata, quando disponível.
 - Inventário de hosts, serviços e contexto de ativos.
 - Enriquecimento offline com referências CWE e MITRE ATT&CK.
 - Reputação e catálogos locais opcionais, com fonte, validade e cache.
-- Relatório JSON e HTML determinístico, sem dependência de LLM.
+- Relatório JSON, HTML e PDF determinístico, com hash de integridade e sem LLM.
 - Interface de investigação com findings, rede, contexto e timeline.
+- Validação TCP opcional, sem payload, com política deny-by-default, dupla
+  aprovação, allowlist e trilha de auditoria.
 
 ## Relatório auditável e legível
 
@@ -69,9 +73,17 @@ confiança, classificação, finding e referências de evidência. A seção de
 serviços mostra somente os grupos mais relevantes; o inventário completo
 continua disponível pela API.
 
-Usuários podem ser exibidos quando observados, mas senhas, tokens e outros
-segredos são omitidos. Como SSH e TLS são criptografados, a aplicação não afirma
-que houve login ou vazamento quando a captura não oferece evidência suficiente.
+No modo forense atual, usuário e senha observados em protocolos de autenticação
+sem criptografia são preservados no evento, na API e no relatório. Por isso, o
+diretório de dados e os relatórios devem ser tratados como material sensível e a
+autenticação HTTP da aplicação deve ser habilitada ao disponibilizá-la em rede.
+Como SSH e TLS são criptografados, a aplicação não afirma que conhece suas senhas
+nem que houve login quando a captura não oferece evidência suficiente.
+
+Uma política local opcional permite classificar um login bem-sucedido como
+autorizado ou não autorizado. Sem essa política, a aplicação mantém a autorização
+como desconhecida. Consulte o
+[roteiro da Sprint 10](docs/17-TESTE-MANUAL-SPRINT-10.md).
 
 ## Pipeline
 
@@ -96,6 +108,23 @@ Enriquecimento e contexto
     ▼
 Relatório HTML/JSON + interface web
 ```
+
+## Validação ativa segura
+
+A validação fica desabilitada quando `PCAP_VALIDATION_POLICY_FILE` não está
+configurado. Quando habilitada em laboratório autorizado, o alvo não é digitado
+livremente: ele vem do IP e da porta registrados no finding e precisa coincidir
+com a allowlist. O fluxo separa dry-run, aprovação, execução e conclusão humana.
+O único validador atual, `tcp-connect`, não envia payload e informa apenas
+alcance do serviço, não a existência de uma vulnerabilidade.
+
+Veja a política conservadora de exemplo em
+[`samples/validation/policy.example.json`](samples/validation/policy.example.json)
+e o [roteiro manual da Sprint 8](docs/14-TESTE-MANUAL-SPRINT-8.md).
+
+Corpus, métricas TP/FP/FN, benchmark, retenção, migrations, autenticação e os
+procedimentos de backup estão documentados no
+[guia de consolidação operacional](docs/15-CONSOLIDACAO-OPERACIONAL.md).
 
 Para capturas maiores, a normalização utiliza agregação indexada, persistência
 em lotes e SQLite em modo WAL. Jobs interrompidos são recuperados como falha na

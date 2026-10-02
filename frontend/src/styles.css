@@ -186,6 +186,20 @@ progress { width: 100%; height: 8px; border: 0; border-radius: 8px; overflow: hi
 .context-grid strong { font-size: .83rem; }
 .context-grid p { margin: 7px 0; color: #9fb2c5; font-size: .79rem; line-height: 1.55; }
 .context-grid small, .table-subline { display: block; color: #71879c; font-size: .7rem; }
+.validation-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.validation-form label { display: grid; gap: 6px; color: var(--muted); font-size: .75rem; }
+.validation-form input, .validation-form select, .validation-form textarea { min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; outline: none; background: #081522; color: var(--text); }
+.validation-form textarea { min-height: 90px; resize: vertical; }
+.validation-form input:focus, .validation-form select:focus, .validation-form textarea:focus { border-color: #3d8e80; box-shadow: 0 0 0 3px #49d3b212; }
+.validation-form .checkbox-row { grid-column: 1 / -1; display: flex; align-items: center; }
+.validation-form .checkbox-row input { min-width: auto; }
+.validation-form > .button { align-self: end; justify-self: start; }
+.validation-list { display: grid; gap: 12px; }
+.validation-card { padding: 16px; border: 1px solid var(--line-soft); border-radius: 8px; background: #091522; }
+.validation-card .section-heading h3 { margin-top: 8px; }
+.validation-card > p { color: #afc1d1; line-height: 1.6; }
+.validation-card details { margin-top: 16px; color: var(--muted); }
+.compact-form { padding-top: 14px; border-top: 1px solid var(--line-soft); }
 .timeline-finding { display: grid; grid-template-columns: 165px auto 1fr; gap: 12px; align-items: center; margin-bottom: 10px; padding: 11px; border: 1px solid #593846; border-radius: 7px; background: #241621; }
 .timeline-finding time, .timeline-list time { color: var(--muted); font-size: .72rem; }
 .timeline-finding a { color: #ffafba; }
@@ -231,7 +245,7 @@ progress { width: 100%; height: 8px; border: 0; border-radius: 8px; overflow: hi
   .analysis-identity { padding-bottom: 0; }
   .analysis-nav { width: 100%; }
   .pipeline { grid-template-columns: 1fr; }
-  .fact-grid, .finding-columns, .service-chips, .capability-grid, .context-grid { grid-template-columns: 1fr; }
+  .fact-grid, .finding-columns, .service-chips, .capability-grid, .context-grid, .validation-form { grid-template-columns: 1fr; }
   .finding-card summary { grid-template-columns: auto 1fr; }
   .finding-card summary > .status { grid-column: 2; }
   .filters { flex-direction: column; }

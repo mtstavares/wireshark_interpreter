@@ -4,6 +4,7 @@ export const terminalStatuses = new Set<AnalysisStatus>([
   "completed",
   "completed_with_warnings",
   "failed",
+  "canceled",
 ]);
 
 export const severityOrder: Record<Severity, number> = {

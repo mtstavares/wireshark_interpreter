@@ -16,6 +16,7 @@ export default function App() {
         <Route path="/analyses/:analysisId/findings" element={<AnalysisPage section="findings" />} />
         <Route path="/analyses/:analysisId/network" element={<AnalysisPage section="network" />} />
         <Route path="/analyses/:analysisId/context" element={<AnalysisPage section="context" />} />
+        <Route path="/analyses/:analysisId/validation" element={<AnalysisPage section="validation" />} />
         <Route path="/analyses/:analysisId/timeline" element={<AnalysisPage section="timeline" />} />
         <Route path="/analyses/:analysisId/report" element={<AnalysisPage section="report" />} />
         <Route path="/about" element={<AboutPage />} />

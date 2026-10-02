@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
+from dataclasses import asdict, replace
+from datetime import datetime
+from hashlib import sha256
 from ipaddress import ip_address
 from uuid import NAMESPACE_URL, uuid5
 
@@ -20,14 +24,16 @@ from backend.app.domain.reports import (
     ReportTimelineEntry,
     SecurityReport,
 )
+from backend.app.domain.validation import Validation
 from backend.app.infrastructure.database import (
     AnalysisRepository,
     CaptureRepository,
     FindingRepository,
     NetworkRepository,
+    ValidationRepository,
 )
 
-REPORT_SCHEMA_VERSION = "1.2"
+REPORT_SCHEMA_VERSION = "1.4"
 MAX_REPORT_FINDINGS = 10_000
 
 
@@ -47,12 +53,14 @@ class ReportService:
         network_repository: NetworkRepository,
         finding_repository: FindingRepository,
         enrichment_service: EnrichmentService,
+        validation_repository: ValidationRepository,
     ) -> None:
         self._capture_repository = capture_repository
         self._analysis_repository = analysis_repository
         self._network_repository = network_repository
         self._finding_repository = finding_repository
         self._enrichment_service = enrichment_service
+        self._validation_repository = validation_repository
 
     def generate(self, analysis_id: str) -> SecurityReport:
         analysis = self._analysis_repository.get(analysis_id)
@@ -71,6 +79,7 @@ class ReportService:
             raise ReportNotFoundError(analysis.capture_id)
         inventory = self._network_repository.inventory(analysis_id)
         findings = self._finding_repository.list(analysis_id, limit=MAX_REPORT_FINDINGS)
+        validations = self._validation_repository.list(analysis_id)
         return _build_report(
             capture,
             analysis,
@@ -78,6 +87,7 @@ class ReportService:
             findings,
             self._enrichment_service.list(analysis_id),
             self._enrichment_service.assets(analysis_id),
+            validations,
         )
 
 
@@ -88,6 +98,7 @@ def _build_report(
     findings: list[Finding],
     enrichments: list[Enrichment],
     assets: list[AssetContext],
+    validations: list[Validation],
 ) -> SecurityReport:
     report_findings = [_report_finding(finding) for finding in findings]
     severity_counts = {severity: 0 for severity in Severity}
@@ -100,9 +111,7 @@ def _build_report(
         if value is not None
     ]
     observed_times.extend(
-        value
-        for host in inventory.hosts
-        for value in (host.first_seen, host.last_seen)
+        value for host in inventory.hosts for value in (host.first_seen, host.last_seen)
     )
     normalization = analysis.normalization
     generated_at = analysis.completed_at or analysis.started_at or analysis.created_at
@@ -117,7 +126,7 @@ def _build_report(
         first_seen=min(observed_times, default=None),
         last_seen=max(observed_times, default=None),
     )
-    return SecurityReport(
+    report = SecurityReport(
         schema_version=REPORT_SCHEMA_VERSION,
         report_id=str(uuid5(NAMESPACE_URL, f"report:{analysis.id}:{REPORT_SCHEMA_VERSION}")),
         generated_at=generated_at,
@@ -131,6 +140,9 @@ def _build_report(
             capture_format=capture.capture_format.value,
         ),
         executive_summary=_executive_summary(summary),
+        conclusion=_conclusion(summary, analysis),
+        next_steps=_next_steps(findings, analysis),
+        integrity_sha256="",
         summary=summary,
         analyzers=[
             ReportAnalyzer(
@@ -160,8 +172,56 @@ def _build_report(
         indicators=_indicators(findings),
         enrichments=enrichments,
         assets=assets,
-        limitations=_limitations(analysis),
+        validations=validations,
+        limitations=_limitations(analysis, validations),
     )
+    return replace(report, integrity_sha256=_integrity_hash(report))
+
+
+def _integrity_hash(report: SecurityReport) -> str:
+    payload = asdict(report)
+    payload.pop("integrity_sha256", None)
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=lambda value: (
+            value.isoformat().replace("+00:00", "Z") if isinstance(value, datetime) else str(value)
+        ),
+    ).encode("utf-8")
+    return sha256(canonical).hexdigest()
+
+
+def _conclusion(summary: ReportSummary, analysis: Analysis) -> str:
+    unavailable = [
+        run.analyzer for run in analysis.analyzer_runs if run.status is not AnalyzerStatus.COMPLETED
+    ]
+    if summary.finding_count == 0:
+        conclusion = "Não foram identificados comportamentos cobertos pelas regras habilitadas."
+    else:
+        priority = sum(
+            summary.severity_counts[level] for level in (Severity.CRITICAL, Severity.HIGH)
+        )
+        conclusion = (
+            f"Foram identificados {summary.finding_count} finding(s), sendo {priority} de "
+            "prioridade alta ou crítica."
+        )
+    if unavailable:
+        conclusion += " A conclusão possui visibilidade reduzida por analisadores incompletos."
+    return conclusion
+
+
+def _next_steps(findings: list[Finding], analysis: Analysis) -> list[str]:
+    steps = [
+        "Preservar o PCAP original e verificar seu SHA-256 antes de compartilhar a evidência.",
+        "Revisar filtros Wireshark e referências dos findings antes de responder ao incidente.",
+    ]
+    if any(item.severity in {Severity.CRITICAL, Severity.HIGH} for item in findings):
+        steps.insert(0, "Priorizar a validação contextual dos findings altos e críticos.")
+    if any(run.status is not AnalyzerStatus.COMPLETED for run in analysis.analyzer_runs):
+        steps.append("Reexecutar a análise com os analisadores indisponíveis ou incompletos.")
+    return steps
 
 
 def _report_finding(finding: Finding) -> ReportFinding:
@@ -209,8 +269,7 @@ def _executive_summary(summary: ReportSummary) -> str:
             "de atividade maliciosa; considere as limitações da captura e dos analisadores."
         )
     priority = sum(
-        summary.severity_counts[severity]
-        for severity in (Severity.CRITICAL, Severity.HIGH)
+        summary.severity_counts[severity] for severity in (Severity.CRITICAL, Severity.HIGH)
     )
     if priority:
         return (
@@ -260,19 +319,25 @@ def _indicators(findings: list[Finding]) -> list[ReportIndicator]:
     ]
 
 
-def _limitations(analysis: Analysis) -> list[str]:
+def _limitations(analysis: Analysis, validations: list[Validation]) -> list[str]:
     limitations = [
-        "Usuarios podem ser exibidos, mas senhas, tokens e outros segredos sao sempre "
-        "omitidos do relatorio.",
+        "Credenciais observadas em protocolos sem criptografia podem ser reproduzidas "
+        "integralmente; trate este relatório como evidência sensível.",
         "A captura representa somente o tráfego observado e pode estar incompleta ou truncada.",
         "Conteúdo protegido por TLS pode ocultar autenticação, comandos e dados transferidos.",
         "Findings inferidos e assinaturas exigem validação contextual antes de resposta ativa.",
-        "Nenhuma exploração ou validação ativa foi executada por este relatório.",
     ]
+    if validations:
+        limitations.append(
+            "Uma conexão TCP valida somente alcançabilidade; não confirma exploração nem "
+            "vulnerabilidade e não altera findings automaticamente."
+        )
+    else:
+        limitations.append(
+            "Nenhuma exploração ou validação ativa foi executada por este relatório."
+        )
     unavailable = [
-        run.analyzer
-        for run in analysis.analyzer_runs
-        if run.status is not AnalyzerStatus.COMPLETED
+        run.analyzer for run in analysis.analyzer_runs if run.status is not AnalyzerStatus.COMPLETED
     ]
     if unavailable:
         limitations.append(

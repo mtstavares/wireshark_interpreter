@@ -67,11 +67,15 @@ export function StatusBadge({ status }: { status: string }) {
     completed: "Concluída",
     completed_with_warnings: "Com avisos",
     failed: "Falhou",
+    canceled: "Cancelada",
     unavailable: "Indisponível",
     timed_out: "Tempo esgotado",
     observed: "Observado",
     inferred: "Inferido",
     signature_match: "Assinatura",
+    awaiting_approval: "Aguardando aprovação",
+    blocked: "Bloqueada",
+    approved: "Aprovada",
   };
   return <span className={`status status-${status}`}>{labels[status] ?? status}</span>;
 }
@@ -128,6 +132,7 @@ export function AnalysisNav({ analysisId, status }: { analysisId: string; status
         <NavLink to={`${base}/findings`}>Findings</NavLink>
         <NavLink to={`${base}/network`}>Rede</NavLink>
         <NavLink to={`${base}/context`}>Contexto</NavLink>
+        <NavLink to={`${base}/validation`}>Validação</NavLink>
         <NavLink to={`${base}/timeline`}>Timeline</NavLink>
         <NavLink to={`${base}/report`}>Relatório</NavLink>
       </nav>

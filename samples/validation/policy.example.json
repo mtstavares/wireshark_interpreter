@@ -1,0 +1,11 @@
+{
+  "active_enabled": false,
+  "allow_public_targets": false,
+  "allowed_networks": ["127.0.0.0/8"],
+  "allowed_ports": [8000],
+  "validators": ["tcp-connect"],
+  "timeout_seconds": 3
+  ,"execution_backend": "docker"
+  ,"docker_image": "pcap-validator:local"
+  ,"docker_network": "pcap-validation-egress"
+}

@@ -13,7 +13,9 @@ Cadência sugerida: uma semana por sprint. Cada sprint termina com demonstraçã
 | 5 — Relatórios | Concluída | JSON/HTML determinísticos, timeline e filtros Wireshark |
 | 6 — Interface | Concluída | SPA responsiva, upload, investigação, timeline, relatórios e teste real |
 | 7 — Enriquecimento | Concluída | CWE/MITRE/CVE/CPE, contexto de ativos, reputação local, cache e provenance |
-| 8 e 9 | Planejadas | Sprint 8 é a próxima; escopo definido abaixo |
+| 8 — Validação segura | Concluída | Política deny-by-default, dupla aprovação, teste TCP sem payload e auditoria |
+| 9 — Consolidação selecionada | Concluída | Corpus, benchmark, hardening, migrations e relatório final |
+| 10 — Autenticação forense | Concluída | Credenciais em texto claro, correlação de respostas e política local |
 | LLM opcional | Adiada | Somente após a consolidação |
 
 ## Sprint 1 — Fundação e ingestão segura
@@ -128,6 +130,20 @@ Objetivo: reduzir falsos positivos somente em ambientes autorizados.
 
 Critério de aceite: nenhum destino fora da allowlist pode ser acessado e toda execução é auditável.
 
+Resultado: a aplicação cria primeiro um plano sem tráfego, aceita somente o IP e
+a porta exatos do finding e reavalia a política antes de executar. A política é
+`deny-by-default`, rejeita nomes DNS e destinos públicos por padrão e exige
+allowlist de rede, porta e validador. A execução requer a frase separada
+`AUTORIZADO`, faz apenas uma conexão TCP sem payload e grava solicitante,
+aprovador, horários, resultado e revisão humana. O resultado de alcance é
+contextual: nunca confirma vulnerabilidade nem altera o finding automaticamente.
+A interface e o relatório 1.3 exibem todo o fluxo. O roteiro está em
+[`14-TESTE-MANUAL-SPRINT-8.md`](14-TESTE-MANUAL-SPRINT-8.md).
+
+Limite consciente: o validador é restrito no nível da aplicação e não executa
+comandos arbitrários. Isolamento adicional por processo/container e laboratório
+de replay ficam para a consolidação antes de ampliar a biblioteca de validadores.
+
 ## Sprint 9 — Consolidação
 
 Objetivo: preparar a versão de portfólio.
@@ -140,6 +156,35 @@ Objetivo: preparar a versão de portfólio.
 
 Critério de aceite: instalação limpa, demonstração repetível e limitações documentadas.
 
+Resultado do escopo selecionado: corpus PCAP versionado com baseline TP/FP/FN,
+benchmark até 50 MiB, cancelamento e limites dos subprocessos, retenção confirmada
+por dry-run, autenticação opcional, headers de segurança, testes de entradas
+corrompidas e XSS, migrations Alembic, PDF nativo, conclusão, próximos passos e
+hash de integridade. O validador ativo ganhou backend Docker sem privilégios em
+rede interna sem egress. Consulte
+[`15-CONSOLIDACAO-OPERACIONAL.md`](15-CONSOLIDACAO-OPERACIONAL.md).
+O teste manual está em
+[`16-TESTE-MANUAL-CONSOLIDACAO.md`](16-TESTE-MANUAL-CONSOLIDACAO.md).
+
+## Sprint 10 — Autenticação forense em texto claro
+
+Objetivo: transformar credenciais observáveis e respostas explícitas dos
+protocolos em eventos e findings auditáveis.
+
+- Extração seletiva do TShark, sem persistir payload integral.
+- Correlação por `tcp.stream` de FTP, POP3, IMAP e SMTP.
+- HTTP Basic com resposta conservadora: códigos HTTP isolados não confirmam login.
+- Heurística de prompts e respostas explícitas para Telnet.
+- Usuário e senha completos nos eventos e relatórios forenses.
+- Política opcional para contas, serviços, destinos e redes de origem permitidos.
+- Nenhuma tentativa de descriptografar SSH ou TLS.
+
+Critério de aceite: uma troca FTP `USER`/`PASS` seguida de `230` produz um finding
+de autenticação bem-sucedida com evidência dos pacotes; política `deny` pode elevar
+um sucesso fora das regras para crítico e não há afirmação equivalente para SSH,
+TLS ou HTTP ambíguo.
+
 ## Sprint futura — LLM opcional
 
-Somente após a Sprint 9: pacote compacto de evidências, saída estruturada, orçamento, cache, avaliações e fallback determinístico.
+Somente após a consolidação: pacote compacto de evidências, saída estruturada,
+orçamento, cache, avaliações e fallback determinístico.

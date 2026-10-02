@@ -27,6 +27,8 @@ PCAPs contêm evidências valiosas, mas exigem conhecimento técnico e correlaç
 - Força bruta e password spraying quando o protocolo fornece evidência suficiente.
 - Falhas seguidas de possível autenticação bem-sucedida.
 - Credenciais ou autenticação em protocolo sem criptografia.
+- Correlação de usuário, senha e resultado em protocolos de autenticação em texto
+  claro, com política local opcional de autorização.
 - Consultas DNS anômalas, possíveis túneis e domínios de alta entropia.
 - Beaconing e conexões periódicas.
 - Alertas IDS e tentativas de exploração reconhecidas pelo Suricata.
@@ -61,6 +63,8 @@ PCAPs contêm evidências valiosas, mas exigem conhecimento técnico e correlaç
 
 - Capturas podem estar truncadas, incompletas ou sem o início de uma sessão.
 - TLS pode ocultar conteúdo e resultados de autenticação.
+- SSH e TLS não revelam suas credenciais sem material legítimo de descriptografia.
+- Credenciais preservadas em eventos e relatórios tornam esses artefatos sensíveis.
 - Um código HTTP isolado não comprova sucesso de login.
 - Um IP reputado pode pertencer a infraestrutura compartilhada.
 - Uma versão identificada pode ter backports de segurança.

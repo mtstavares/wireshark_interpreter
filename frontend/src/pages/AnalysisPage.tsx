@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 
@@ -24,6 +24,7 @@ import type {
   NetworkEvent,
   SecurityReport,
   Severity,
+  Validation,
 } from "../types";
 import {
   endpoint,
@@ -34,9 +35,10 @@ import {
   terminalStatuses,
 } from "../utils";
 
-type Section = "overview" | "findings" | "network" | "context" | "timeline" | "report";
+type Section = "overview" | "findings" | "network" | "context" | "validation" | "timeline" | "report";
 
 export function AnalysisPage({ section }: { section: Section }) {
+  const queryClient = useQueryClient();
   const { analysisId } = useParams();
   const id = analysisId ?? "";
   const analysisQuery = useQuery({
@@ -50,6 +52,10 @@ export function AnalysisPage({ section }: { section: Section }) {
   });
   const analysis = analysisQuery.data;
   const terminal = analysis ? terminalStatuses.has(analysis.status) : false;
+  const cancelAnalysis = useMutation({
+    mutationFn: () => api.cancelAnalysis(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["analysis", id] }),
+  });
   const captureQuery = useQuery({
     queryKey: ["capture", analysis?.capture_id],
     queryFn: () => api.capture(analysis?.capture_id ?? ""),
@@ -91,6 +97,14 @@ export function AnalysisPage({ section }: { section: Section }) {
     queryFn: () => api.assets(id),
     enabled: terminal && section === "context",
   });
+  const validationsQuery = useQuery({
+    queryKey: ["validations", id],
+    queryFn: () => api.validations(id),
+    enabled: terminal && section === "validation",
+    refetchInterval: (query) => query.state.data?.some(
+      (item) => item.status === "approved" || item.status === "running",
+    ) ? 1_000 : false,
+  });
 
   if (!id) return <ErrorState error={new Error("Identificador de análise ausente")} />;
   if (analysisQuery.isPending) return <LoadingState label="Abrindo a investigação…" />;
@@ -107,7 +121,11 @@ export function AnalysisPage({ section }: { section: Section }) {
           <a className="button button-ghost" href={`/api/v1/analyses/${id}/report.html`} target="_blank" rel="noreferrer">
             Abrir relatório ↗
           </a>
-        ) : undefined}
+        ) : (
+          <button className="button button-ghost" disabled={cancelAnalysis.isPending} onClick={() => cancelAnalysis.mutate()}>
+            Cancelar análise
+          </button>
+        )}
       />
       <AnalysisNav analysisId={id} status={analysis.status} />
       {!terminal && <Pipeline analysis={analysis} />}
@@ -149,8 +167,106 @@ export function AnalysisPage({ section }: { section: Section }) {
           error={enrichmentsQuery.error ?? assetsQuery.error}
         />
       )}
+      {section === "validation" && (
+        <ValidationView
+          analysisId={id}
+          findings={findingsQuery.data}
+          validations={validationsQuery.data}
+          loading={findingsQuery.isPending || validationsQuery.isPending}
+          error={findingsQuery.error ?? validationsQuery.error}
+        />
+      )}
       {section === "report" && <ReportView analysisId={id} terminal={terminal} />}
     </>
+  );
+}
+
+function ValidationView({
+  analysisId,
+  findings,
+  validations,
+  loading,
+  error,
+}: {
+  analysisId: string;
+  findings?: Finding[];
+  validations?: Validation[];
+  loading: boolean;
+  error: unknown;
+}) {
+  const queryClient = useQueryClient();
+  const eligible = (findings ?? []).filter(
+    (item) => item.destination_ip && item.destination_port,
+  );
+  const [findingId, setFindingId] = useState(eligible[0]?.id ?? "");
+  const selectedFindingId = findingId || eligible[0]?.id || "";
+  const [requester, setRequester] = useState("");
+  const [scope, setScope] = useState("");
+  const [authorized, setAuthorized] = useState(false);
+  const plan = useMutation({
+    mutationFn: () => api.planValidation(selectedFindingId, {
+      authorization_confirmed: authorized,
+      scope_reference: scope,
+      requested_by: requester,
+    }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["validations", analysisId] }),
+  });
+
+  if (loading) return <LoadingState label="Carregando validações…" />;
+  if (error) return <ErrorState error={error} />;
+  return (
+    <>
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">Controle de risco</p><h2>Planejar validação segura</h2></div></div>
+        <div className="callout callout-warning"><strong>Autorização obrigatória</strong><span>O alvo vem do finding e ainda precisa estar na allowlist local. O plano não executa conexão; uma segunda aprovação é exigida.</span></div>
+        {eligible.length === 0 ? <EmptyState title="Nenhum alvo elegível">É necessário um finding com IP e porta de destino exatos.</EmptyState> : (
+          <form className="validation-form" onSubmit={(event) => { event.preventDefault(); plan.mutate(); }}>
+            <label>Finding e alvo<select value={selectedFindingId} onChange={(event) => setFindingId(event.target.value)}>{eligible.map((item) => <option key={item.id} value={item.id}>{item.title} · {endpoint(item.destination_ip, item.destination_port)}</option>)}</select></label>
+            <label>Solicitante<input value={requester} minLength={2} required onChange={(event) => setRequester(event.target.value)} /></label>
+            <label>Referência do escopo<input value={scope} minLength={5} required placeholder="Ex.: laboratório autorizado #123" onChange={(event) => setScope(event.target.value)} /></label>
+            <label className="checkbox-row"><input type="checkbox" checked={authorized} required onChange={(event) => setAuthorized(event.target.checked)} /> Confirmo autorização para este alvo e escopo.</label>
+            <button className="button button-primary" disabled={plan.isPending}>Criar dry-run</button>
+            {plan.isError && <ErrorState error={plan.error} />}
+          </form>
+        )}
+      </section>
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">Auditoria</p><h2>Validações registradas</h2></div><span>{validations?.length ?? 0} registro(s)</span></div>
+        {(validations?.length ?? 0) === 0 ? <EmptyState title="Nenhuma validação planejada">Crie um dry-run acima para avaliar a política sem gerar tráfego.</EmptyState> : (
+          <div className="validation-list">{validations?.map((item) => <ValidationCard key={item.id} validation={item} analysisId={analysisId} />)}</div>
+        )}
+      </section>
+    </>
+  );
+}
+
+function ValidationCard({ validation, analysisId }: { validation: Validation; analysisId: string }) {
+  const queryClient = useQueryClient();
+  const [actor, setActor] = useState("");
+  const [phrase, setPhrase] = useState("");
+  const [conclusion, setConclusion] = useState("inconclusive");
+  const [rationale, setRationale] = useState("");
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["validations", analysisId] });
+    void queryClient.invalidateQueries({ queryKey: ["report", analysisId] });
+  };
+  const approve = useMutation({
+    mutationFn: () => api.approveValidation(validation.id, phrase, actor),
+    onSuccess: refresh,
+  });
+  const review = useMutation({
+    mutationFn: () => api.reviewValidation(validation.id, conclusion, rationale, actor),
+    onSuccess: refresh,
+  });
+  return (
+    <article className="validation-card">
+      <div className="section-heading"><div><StatusBadge status={validation.status} /><h3><code>{validation.target_ip}:{validation.target_port}</code></h3></div><span>{validation.validator}</span></div>
+      <p>{validation.result_summary ?? validation.policy_reason}</p>
+      <dl className="fact-grid"><div><dt>Resultado técnico</dt><dd>{validation.technical_result}</dd></div><div><dt>Conclusão humana</dt><dd>{validation.analyst_conclusion}</dd></div><div><dt>Escopo</dt><dd>{validation.scope_reference}</dd></div><div><dt>Solicitante</dt><dd>{validation.requested_by}</dd></div></dl>
+      {validation.status === "awaiting_approval" && <form className="validation-form compact-form" onSubmit={(event) => { event.preventDefault(); approve.mutate(); }}><label>Aprovador<input required minLength={2} value={actor} onChange={(event) => setActor(event.target.value)} /></label><label>Digite AUTORIZADO<input required value={phrase} onChange={(event) => setPhrase(event.target.value)} /></label><button className="button button-primary" disabled={approve.isPending}>Aprovar e executar</button>{approve.isError && <ErrorState error={approve.error} />}</form>}
+      {validation.status === "completed" && validation.analyst_conclusion === "pending" && <form className="validation-form compact-form" onSubmit={(event) => { event.preventDefault(); review.mutate(); }}><label>Revisor<input required minLength={2} value={actor} onChange={(event) => setActor(event.target.value)} /></label><label>Conclusão<select value={conclusion} onChange={(event) => setConclusion(event.target.value)}><option value="confirmed">Confirmado</option><option value="false_positive">Falso positivo</option><option value="inconclusive">Inconclusivo</option></select></label><label>Justificativa<textarea required minLength={10} value={rationale} onChange={(event) => setRationale(event.target.value)} /></label><button className="button button-primary" disabled={review.isPending}>Registrar revisão</button>{review.isError && <ErrorState error={review.error} />}</form>}
+      <details><summary>Trilha de auditoria ({validation.audit.length})</summary><ol className="clean-list">{validation.audit.map((item) => <li key={item.id}>{formatDate(item.occurred_at)} · {item.action} · {item.actor}</li>)}</ol></details>
+    </article>
   );
 }
 
@@ -419,7 +535,7 @@ function ReportView({ analysisId, terminal }: { analysisId: string; terminal: bo
     <section className="panel report-panel">
       <div className="section-heading">
         <div><p className="eyebrow">Exportação</p><h2>Relatório auditável</h2></div>
-        <div className="header-actions"><a className="button button-ghost" href={jsonUrl}>Baixar JSON</a><a className="button button-primary" href={htmlUrl} target="_blank" rel="noreferrer">Abrir HTML ↗</a></div>
+        <div className="header-actions"><a className="button button-ghost" href={jsonUrl}>Baixar JSON</a><a className="button button-ghost" href={`/api/v1/analyses/${analysisId}/report.pdf`}>Baixar PDF</a><a className="button button-primary" href={htmlUrl} target="_blank" rel="noreferrer">Abrir HTML ↗</a></div>
       </div>
       <iframe title="Prévia do relatório" src={htmlUrl} />
     </section>

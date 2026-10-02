@@ -14,6 +14,7 @@ class AnalysisStatus(StrEnum):
     COMPLETED = "completed"
     COMPLETED_WITH_WARNINGS = "completed_with_warnings"
     FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class AnalyzerStatus(StrEnum):
@@ -23,6 +24,7 @@ class AnalyzerStatus(StrEnum):
     FAILED = "failed"
     UNAVAILABLE = "unavailable"
     TIMED_OUT = "timed_out"
+    CANCELED = "canceled"
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,7 +4,8 @@ export type AnalysisStatus =
   | "running"
   | "completed"
   | "completed_with_warnings"
-  | "failed";
+  | "failed"
+  | "canceled";
 
 export interface Capture {
   id: string;
@@ -170,6 +171,55 @@ export interface AssetContext {
   provenance: string;
 }
 
+export type ValidationStatus =
+  | "awaiting_approval"
+  | "blocked"
+  | "approved"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type AnalystConclusion =
+  | "pending"
+  | "confirmed"
+  | "false_positive"
+  | "inconclusive";
+
+export interface ValidationAuditEntry {
+  id: string;
+  validation_id: string;
+  action: string;
+  actor: string;
+  occurred_at: string;
+  details: Record<string, string | number | boolean | null>;
+}
+
+export interface Validation {
+  id: string;
+  analysis_id: string;
+  finding_id: string;
+  validator: "tcp-connect";
+  target_ip: string;
+  target_port: number;
+  status: ValidationStatus;
+  policy_allowed: boolean;
+  policy_reason: string;
+  scope_reference: string;
+  requested_by: string;
+  approved_by: string | null;
+  created_at: string;
+  approved_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  technical_result: "not_executed" | "reachable" | "not_reachable" | "error";
+  analyst_conclusion: AnalystConclusion;
+  result_summary: string | null;
+  review_rationale: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  audit: ValidationAuditEntry[];
+}
+
 export interface ReportFinding extends Omit<Finding, "analysis_id"> {
   wireshark_filter: string | null;
 }
@@ -205,6 +255,9 @@ export interface SecurityReport {
     "id" | "original_filename" | "sha256" | "size_bytes" | "capture_format"
   >;
   executive_summary: string;
+  conclusion: string;
+  next_steps: string[];
+  integrity_sha256: string;
   summary: {
     flow_count: number;
     event_count: number;
@@ -230,6 +283,7 @@ export interface SecurityReport {
   indicators: Array<{ type: string; value: string; finding_ids: string[] }>;
   enrichments: Enrichment[];
   assets: AssetContext[];
+  validations: Validation[];
   limitations: string[];
 }
 

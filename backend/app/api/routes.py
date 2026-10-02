@@ -25,6 +25,10 @@ from backend.app.api.schemas import (
     NetworkInventoryResponse,
     ProblemDetail,
     SecurityReportResponse,
+    ValidationApprovalRequest,
+    ValidationPlanRequest,
+    ValidationResponse,
+    ValidationReviewRequest,
 )
 from backend.app.application.enrich_analysis import EnrichmentService
 from backend.app.application.generate_report import (
@@ -36,7 +40,14 @@ from backend.app.application.ingest_capture import CaptureIngestionError, Ingest
 from backend.app.application.run_analysis import (
     AnalysisNotFoundError,
     AnalysisService,
+    AnalysisStateError,
     CaptureNotFoundError,
+)
+from backend.app.application.validate_finding import (
+    ValidationAuthorizationError,
+    ValidationNotFoundError,
+    ValidationService,
+    ValidationStateError,
 )
 from backend.app.domain.findings import Severity
 from backend.app.domain.reports import SecurityReport
@@ -46,6 +57,7 @@ from backend.app.infrastructure.database import (
     NetworkRepository,
 )
 from backend.app.reporting.html import render_html
+from backend.app.reporting.pdf import render_pdf
 
 router = APIRouter()
 
@@ -76,6 +88,10 @@ def _report_service(request: Request) -> ReportService:
 
 def _enrichment_service(request: Request) -> EnrichmentService:
     return request.app.state.enrichment_service
+
+
+def _validation_service(request: Request) -> ValidationService:
+    return request.app.state.validation_service
 
 
 @router.get("/healthz", tags=["system"])
@@ -129,8 +145,7 @@ def get_capture(capture_id: str, request: Request) -> CaptureResponse:
 def list_captures(request: Request, limit: int = 50) -> list[CaptureResponse]:
     safe_limit = min(max(limit, 1), 100)
     return [
-        CaptureResponse.from_domain(capture)
-        for capture in _repository(request).list(safe_limit)
+        CaptureResponse.from_domain(capture) for capture in _repository(request).list(safe_limit)
     ]
 
 
@@ -162,6 +177,21 @@ def get_analysis(analysis_id: str, request: Request) -> AnalysisResponse:
         analysis = _analysis_service(request).get(analysis_id)
     except AnalysisNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Analysis not found") from exc
+    return AnalysisResponse.from_domain(analysis)
+
+
+@router.post(
+    "/api/v1/analyses/{analysis_id}/cancel",
+    response_model=AnalysisResponse,
+    tags=["analyses"],
+)
+def cancel_analysis(analysis_id: str, request: Request) -> AnalysisResponse:
+    try:
+        analysis = _analysis_service(request).cancel(analysis_id)
+    except AnalysisNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Analysis not found") from exc
+    except AnalysisStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return AnalysisResponse.from_domain(analysis)
 
 
@@ -201,9 +231,7 @@ def list_flows(analysis_id: str, request: Request, limit: int = 100) -> list[Net
     response_model=list[NetworkEventResponse],
     tags=["network"],
 )
-def list_events(
-    analysis_id: str, request: Request, limit: int = 100
-) -> list[NetworkEventResponse]:
+def list_events(analysis_id: str, request: Request, limit: int = 100) -> list[NetworkEventResponse]:
     try:
         _analysis_service(request).get(analysis_id)
     except AnalysisNotFoundError as exc:
@@ -267,6 +295,118 @@ def get_finding(finding_id: str, request: Request) -> FindingResponse:
     return FindingResponse.from_domain(finding)
 
 
+@router.post(
+    "/api/v1/findings/{finding_id}/validations",
+    response_model=ValidationResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["validation"],
+)
+def plan_validation(
+    finding_id: str,
+    body: ValidationPlanRequest,
+    request: Request,
+) -> ValidationResponse:
+    try:
+        validation = _validation_service(request).plan(
+            finding_id,
+            validator=body.validator,
+            authorization_confirmed=body.authorization_confirmed,
+            scope_reference=body.scope_reference,
+            requested_by=body.requested_by,
+        )
+    except ValidationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Finding not found") from exc
+    except ValidationAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValidationStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ValidationResponse.model_validate(validation)
+
+
+@router.get(
+    "/api/v1/analyses/{analysis_id}/validations",
+    response_model=list[ValidationResponse],
+    tags=["validation"],
+)
+def list_validations(analysis_id: str, request: Request) -> list[ValidationResponse]:
+    try:
+        _analysis_service(request).get(analysis_id)
+    except AnalysisNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Analysis not found") from exc
+    return [
+        ValidationResponse.model_validate(item)
+        for item in _validation_service(request).list(analysis_id)
+    ]
+
+
+@router.get(
+    "/api/v1/validations/{validation_id}",
+    response_model=ValidationResponse,
+    tags=["validation"],
+)
+def get_validation(validation_id: str, request: Request) -> ValidationResponse:
+    try:
+        validation = _validation_service(request).get(validation_id)
+    except ValidationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Validation not found") from exc
+    return ValidationResponse.model_validate(validation)
+
+
+@router.post(
+    "/api/v1/validations/{validation_id}/approve",
+    response_model=ValidationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["validation"],
+)
+def approve_validation(
+    validation_id: str,
+    body: ValidationApprovalRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> ValidationResponse:
+    service = _validation_service(request)
+    try:
+        validation = service.approve(
+            validation_id,
+            phrase=body.approval_phrase,
+            approved_by=body.approved_by,
+        )
+    except ValidationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Validation not found") from exc
+    except ValidationAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValidationStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    background_tasks.add_task(service.execute, validation.id)
+    return ValidationResponse.model_validate(validation)
+
+
+@router.post(
+    "/api/v1/validations/{validation_id}/review",
+    response_model=ValidationResponse,
+    tags=["validation"],
+)
+def review_validation(
+    validation_id: str,
+    body: ValidationReviewRequest,
+    request: Request,
+) -> ValidationResponse:
+    try:
+        validation = _validation_service(request).review(
+            validation_id,
+            conclusion=body.conclusion,
+            rationale=body.rationale,
+            reviewed_by=body.reviewed_by,
+        )
+    except ValidationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Validation not found") from exc
+    except ValidationAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValidationStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ValidationResponse.model_validate(validation)
+
+
 @router.get(
     "/api/v1/analyses/{analysis_id}/enrichments",
     response_model=list[EnrichmentResponse],
@@ -304,9 +444,7 @@ def list_asset_contexts(analysis_id: str, request: Request) -> list[AssetContext
     response_model=SecurityReportResponse,
     tags=["reports"],
 )
-def get_report(
-    analysis_id: str, request: Request, response: Response
-) -> SecurityReportResponse:
+def get_report(analysis_id: str, request: Request, response: Response) -> SecurityReportResponse:
     report = _generate_report(analysis_id, request)
     response.headers["Content-Disposition"] = (
         f'attachment; filename="analysis-{analysis_id}-report.json"'
@@ -323,8 +461,22 @@ def get_report_html(analysis_id: str, request: Request) -> HTMLResponse:
     report = _generate_report(analysis_id, request)
     return HTMLResponse(
         render_html(report),
+        headers={"Content-Disposition": f'inline; filename="analysis-{analysis_id}-report.html"'},
+    )
+
+
+@router.get(
+    "/api/v1/analyses/{analysis_id}/report.pdf",
+    tags=["reports"],
+)
+def get_report_pdf(analysis_id: str, request: Request) -> Response:
+    report = _generate_report(analysis_id, request)
+    return Response(
+        content=render_pdf(report),
+        media_type="application/pdf",
         headers={
-            "Content-Disposition": f'inline; filename="analysis-{analysis_id}-report.html"'
+            "Content-Disposition": f'attachment; filename="analysis-{analysis_id}-report.pdf"',
+            "X-Report-SHA256": report.integrity_sha256,
         },
     )
 

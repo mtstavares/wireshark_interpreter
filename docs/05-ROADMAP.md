@@ -41,6 +41,9 @@ Saída: findings contextualizados sem misturar reputação com comprovação.
 
 ## M4 — Validação segura
 
+Estado: concluído para o validador inicial `tcp-connect`; hardening de isolamento
+continua em M5 antes da inclusão de novos validadores.
+
 - Políticas de autorização e allowlist.
 - Sandbox sem privilégios e egress restrito.
 - Validadores não destrutivos e aprovados.

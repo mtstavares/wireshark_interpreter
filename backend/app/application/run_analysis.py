@@ -20,6 +20,10 @@ class CaptureNotFoundError(Exception):
     pass
 
 
+class AnalysisStateError(Exception):
+    pass
+
+
 class AnalysisService:
     def __init__(
         self,
@@ -69,6 +73,8 @@ class AnalysisService:
 
     def run(self, analysis_id: str) -> None:
         analysis = self.get(analysis_id)
+        if analysis.status is AnalysisStatus.CANCELED:
+            return
         capture = self._capture_repository.get(analysis.capture_id)
         if capture is None:
             self._analysis_repository.update_status(
@@ -96,9 +102,13 @@ class AnalysisService:
         failure_count = 0
 
         for analyzer in self._analyzers:
+            if self.get(analysis_id).status is AnalysisStatus.CANCELED:
+                return
             self._analysis_repository.update_run(
                 analysis_id, analyzer.name, status=AnalyzerStatus.RUNNING
             )
+            if self.get(analysis_id).status is AnalysisStatus.CANCELED:
+                return
             output_dir = self._analyses_dir / analysis_id / analyzer.name
             try:
                 result = analyzer.analyze(capture_path, output_dir, self._timeout_seconds)
@@ -175,3 +185,14 @@ class AnalysisService:
                 else None
             ),
         )
+
+    def cancel(self, analysis_id: str) -> Analysis:
+        analysis = self.get(analysis_id)
+        if analysis.status not in {AnalysisStatus.QUEUED, AnalysisStatus.RUNNING}:
+            raise AnalysisStateError("Only queued or running analyses can be canceled")
+        self._analysis_repository.cancel(analysis_id, datetime.now(UTC))
+        for analyzer in self._analyzers:
+            cancel = getattr(analyzer, "cancel", None)
+            if callable(cancel):
+                cancel(analysis_id)
+        return self.get(analysis_id)

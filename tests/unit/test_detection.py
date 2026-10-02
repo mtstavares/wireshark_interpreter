@@ -3,7 +3,10 @@ from datetime import UTC, datetime, timedelta
 from backend.app.detection.detectors import (
     AuthenticationDetector,
     BeaconingDetector,
+    CleartextCredentialDetector,
     CleartextProtocolDetector,
+    CredentialAuthorizationPolicy,
+    CredentialAuthorizationRule,
     DetectorConfig,
     DnsAnomalyDetector,
     LegacySnmpDetector,
@@ -91,9 +94,7 @@ def test_detects_horizontal_and_vertical_scans_but_ignores_benign_volume() -> No
     findings = PortScanDetector(config).detect(
         DetectionContext("analysis", flows=[*horizontal, *vertical])
     )
-    benign = PortScanDetector(config).detect(
-        DetectionContext("analysis", flows=horizontal[:2])
-    )
+    benign = PortScanDetector(config).detect(DetectionContext("analysis", flows=horizontal[:2]))
 
     assert {finding.destination_port for finding in findings} == {None, 445}
     assert all(finding.mitre_attack == ["T1046"] for finding in findings)
@@ -120,16 +121,72 @@ def test_detects_brute_force_password_spray_and_success_after_failures() -> None
         "Possível password spraying",
         "Autenticação bem-sucedida após falhas",
     }
-    success_finding = next(
-        finding for finding in findings if "bem-sucedida" in finding.title
-    )
-    assert success_finding.summary.startswith(
-        "O IP 10.0.0.10 teve sucesso ao autenticar via SSH"
-    )
+    success_finding = next(finding for finding in findings if "bem-sucedida" in finding.title)
+    assert success_finding.summary.startswith("O IP 10.0.0.10 teve sucesso ao autenticar via SSH")
     assert "usando o usuário admin" in success_finding.summary
-    assert AuthenticationDetector(DetectorConfig()).detect(
-        DetectionContext("analysis", events=[success])
-    ) == []
+    assert (
+        AuthenticationDetector(DetectorConfig()).detect(
+            DetectionContext("analysis", events=[success])
+        )
+        == []
+    )
+
+
+def test_reports_full_cleartext_credentials_and_unauthorized_success() -> None:
+    event = _event(
+        50,
+        result="success",
+        username="admin",
+        application="ftp",
+        source="tshark",
+        event_type="authentication",
+        details={
+            "result": "success",
+            "username": "admin",
+            "password": "secret-value",
+            "credential_transport": "cleartext",
+        },
+    )
+    policy = CredentialAuthorizationPolicy(
+        default="deny",
+        rules=(
+            CredentialAuthorizationRule(
+                destination_ip="10.0.0.20",
+                service="ftp",
+                username="admin",
+                source_networks=("10.0.1.0/24",),
+            ),
+        ),
+    )
+
+    finding = CleartextCredentialDetector(policy).detect(
+        DetectionContext("analysis", events=[event])
+    )[0]
+
+    assert finding.title == "Autenticação não autorizada em texto claro"
+    assert finding.severity is Severity.CRITICAL
+    assert 'usuário "admin" e a senha "secret-value"' in finding.summary
+    assert finding.assertion_status is AssertionStatus.OBSERVED
+
+
+def test_http_status_does_not_claim_successful_login() -> None:
+    event = _event(
+        51,
+        application="http",
+        source="tshark",
+        event_type="authentication",
+        details={
+            "result": "possible",
+            "username": "admin",
+            "password": "secret-value",
+            "http_status": 200,
+        },
+    )
+
+    finding = CleartextCredentialDetector().detect(DetectionContext("analysis", events=[event]))[0]
+
+    assert "não comprova sucesso" in finding.summary
+    assert finding.assertion_status is AssertionStatus.INFERRED
 
 
 def test_detects_cleartext_protocol_as_observed() -> None:
@@ -164,8 +221,7 @@ def test_detects_repeated_high_entropy_dns_queries() -> None:
 def test_detects_periodic_beacon_and_rejects_irregular_intervals() -> None:
     periodic = [_flow(index, seconds=index * 60) for index in range(5)]
     irregular = [
-        _flow(index + 10, seconds=seconds)
-        for index, seconds in enumerate((0, 5, 80, 81, 300))
+        _flow(index + 10, seconds=seconds) for index, seconds in enumerate((0, 5, 80, 81, 300))
     ]
     detector = BeaconingDetector(DetectorConfig())
 
@@ -181,9 +237,7 @@ def test_converts_suricata_alert_into_explainable_finding() -> None:
         details={"alert": {"signature": "ET TEST Exploit", "severity": 1}},
     )
 
-    finding = SignatureAlertDetector().detect(
-        DetectionContext("analysis", events=[alert])
-    )[0]
+    finding = SignatureAlertDetector().detect(DetectionContext("analysis", events=[alert]))[0]
 
     assert finding.title == "ET TEST Exploit"
     assert finding.severity is Severity.HIGH
@@ -236,9 +290,7 @@ def test_detects_legacy_snmp_but_not_snmpv3() -> None:
         details=modern.details,
     )
 
-    findings = LegacySnmpDetector().detect(
-        DetectionContext("analysis", events=[legacy, modern])
-    )
+    findings = LegacySnmpDetector().detect(DetectionContext("analysis", events=[legacy, modern]))
 
     assert len(findings) == 1
     assert findings[0].title == "Uso observado de versão legada do SNMP"

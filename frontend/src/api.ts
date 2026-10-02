@@ -9,6 +9,7 @@ import type {
   NetworkEvent,
   RecentAnalysis,
   SecurityReport,
+  Validation,
 } from "./types";
 
 export class ApiError extends Error {
@@ -44,6 +45,8 @@ export const api = {
   analysis: (id: string) => request<Analysis>(`/api/v1/analyses/${id}`),
   createAnalysis: (captureId: string) =>
     request<Analysis>(`/api/v1/captures/${captureId}/analyses`, { method: "POST" }),
+  cancelAnalysis: (id: string) =>
+    request<Analysis>(`/api/v1/analyses/${id}/cancel`, { method: "POST" }),
   findings: (id: string) =>
     request<Finding[]>(`/api/v1/analyses/${id}/findings?limit=1000`),
   inventory: (id: string) => request<Inventory>(`/api/v1/analyses/${id}/inventory`),
@@ -53,6 +56,36 @@ export const api = {
   enrichments: (id: string) =>
     request<Enrichment[]>(`/api/v1/analyses/${id}/enrichments`),
   assets: (id: string) => request<AssetContext[]>(`/api/v1/analyses/${id}/assets`),
+  validations: (id: string) =>
+    request<Validation[]>(`/api/v1/analyses/${id}/validations`),
+  planValidation: (
+    findingId: string,
+    body: {
+      authorization_confirmed: boolean;
+      scope_reference: string;
+      requested_by: string;
+    },
+  ) => request<Validation>(`/api/v1/findings/${findingId}/validations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ validator: "tcp-connect", ...body }),
+  }),
+  approveValidation: (id: string, approvalPhrase: string, approvedBy: string) =>
+    request<Validation>(`/api/v1/validations/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approval_phrase: approvalPhrase, approved_by: approvedBy }),
+    }),
+  reviewValidation: (
+    id: string,
+    conclusion: string,
+    rationale: string,
+    reviewedBy: string,
+  ) => request<Validation>(`/api/v1/validations/${id}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conclusion, rationale, reviewed_by: reviewedBy }),
+  }),
   report: (id: string) => request<SecurityReport>(`/api/v1/analyses/${id}/report`),
 };
 
