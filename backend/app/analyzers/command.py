@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import gzip
 import os
 import shutil
 import subprocess
@@ -66,6 +67,9 @@ class CommandAnalyzer:
         del resolved_executable
         return None
 
+    def finalize_output(self, output_dir: Path) -> None:
+        del output_dir
+
     def analyze(self, capture_path: Path, output_dir: Path, timeout_seconds: int) -> AnalyzerResult:
         started = monotonic()
         resolved_executable = shutil.which(self.executable)
@@ -130,6 +134,8 @@ class CommandAnalyzer:
             diagnostic = limit_diagnostic
         else:
             status = AnalyzerStatus.COMPLETED if process.returncode == 0 else AnalyzerStatus.FAILED
+        if status is AnalyzerStatus.COMPLETED:
+            self.finalize_output(output_dir)
         return AnalyzerResult(
             status=status,
             version=version,
@@ -264,6 +270,23 @@ class TsharkAnalyzer(CommandAnalyzer):
     def version_arguments(self) -> list[str]:
         return ["--version"]
 
+    def finalize_output(self, output_dir: Path) -> None:
+        source = output_dir / "stdout.log"
+        destination = output_dir / "stdout.log.gz"
+        temporary = output_dir / "stdout.log.gz.tmp"
+        if not source.is_file() or source.stat().st_size == 0:
+            return
+        try:
+            with source.open("rb") as input_file, gzip.open(
+                temporary, "wb", compresslevel=1
+            ) as output_file:
+                shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
+            temporary.replace(destination)
+            source.unlink()
+        except OSError:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+
     def analysis_arguments(self, capture_path: Path, output_dir: Path) -> list[str]:
         del output_dir
         fields = [
@@ -294,7 +317,12 @@ class TsharkAnalyzer(CommandAnalyzer):
             "http.authorization",
             "http.proxy_authorization",
             "http.request.method",
+            "http.host",
+            "http.request.uri",
+            "urlencoded-form.key",
+            "urlencoded-form.value",
             "http.response.code",
+            "http.file_data",
             "imap.request.command",
             "imap.request.username",
             "imap.request.password",

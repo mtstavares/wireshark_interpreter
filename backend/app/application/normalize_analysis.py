@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 
-from backend.app.domain.analyses import AnalyzerStatus
+from backend.app.domain.analyses import AnalysisStatus, AnalyzerStatus
 from backend.app.domain.network import NetworkEvent, NetworkFlow
 from backend.app.infrastructure.database import AnalysisRepository, NetworkRepository
 from backend.app.normalization.parsers import (
@@ -49,24 +49,38 @@ class NormalizationService:
                 "suricata": parse_suricata_directory,
                 "tshark": parse_tshark_directory,
             }
+            def cancelled() -> bool:
+                current = self._analysis_repository.get(analysis_id)
+                return current is not None and current.status is AnalysisStatus.CANCELED
             for analyzer, parser in parsers.items():
                 if analyzer not in completed:
                     continue
-                parsed_flows, parsed_events = parser(
-                    analysis_id,
-                    analysis_dir / analyzer,
-                    deadline=deadline,
-                )
+                if analyzer == "tshark":
+                    parsed_flows, parsed_events = parse_tshark_directory(
+                        analysis_id,
+                        analysis_dir / analyzer,
+                        deadline=deadline,
+                        cancelled=cancelled,
+                    )
+                else:
+                    parsed_flows, parsed_events = parser(
+                        analysis_id, analysis_dir / analyzer, deadline=deadline
+                    )
                 flows.extend(parsed_flows)
                 events.extend(parsed_events)
 
-            correlated_flows = merge_flows(analysis_id, flows, deadline=deadline)
+            correlated_flows = merge_flows(
+                analysis_id, flows, deadline=deadline, cancelled=cancelled
+            )
             self._network_repository.save_results(
                 analysis_id,
                 correlated_flows,
                 events,
                 completed_at=datetime.now(UTC),
             )
+        except InterruptedError:
+            self._network_repository.cancel_normalization(analysis_id, datetime.now(UTC))
+            raise
         except Exception as exc:
             self._network_repository.fail_normalization(
                 analysis_id,

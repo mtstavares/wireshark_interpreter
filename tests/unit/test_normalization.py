@@ -169,7 +169,7 @@ def test_parses_and_aggregates_tshark_tsv(tmp_path: Path) -> None:
     assert flows[0].dest_bytes == 90
     assert flows[0].src_packets == 1
     assert flows[0].dest_packets == 1
-    assert len(events) == 2
+    assert events == []
 
 
 def test_correlates_cleartext_ftp_credentials_and_success(tmp_path: Path) -> None:
@@ -297,6 +297,51 @@ def test_http_basic_response_is_only_a_possible_success(tmp_path: Path) -> None:
     assert authentication.details["password"] == "secret"
 
 
+def test_correlates_http_stream_body_and_prefers_application_protocol(tmp_path: Path) -> None:
+    tshark_dir = tmp_path / "tshark"
+    tshark_dir.mkdir()
+    fields = [
+        "frame.number",
+        "frame.time_epoch",
+        "frame.len",
+        "ip.src",
+        "ip.dst",
+        "tcp.srcport",
+        "tcp.dstport",
+        "_ws.col.protocol",
+        "tcp.stream",
+        "http.request.method",
+        "http.request.uri",
+        "http.response.code",
+        "http.file_data",
+    ]
+    rows = [
+        [
+            "1", "1700000000.0", "60", "10.0.0.5", "10.0.0.20", "51000", "80",
+            "TCP", "9", "", "", "", "",
+        ],
+        [
+            "2", "1700000000.1", "100", "10.0.0.5", "10.0.0.20", "51000", "80",
+            "HTTP", "9", "POST", "/login", "", "",
+        ],
+        [
+            "3", "1700000000.2", "100", "10.0.0.20", "10.0.0.5", "80", "51000",
+            "HTTP", "9", "", "", "200", "57656c636f6d652061646d696e",
+        ],
+    ]
+    (tshark_dir / "stdout.log").write_text(
+        "\n".join(["\t".join(fields), *("\t".join(row) for row in rows)]) + "\n",
+        encoding="utf-8",
+    )
+
+    flows, events = parse_tshark_directory("analysis", tshark_dir)
+
+    assert flows[0].application == "http"
+    assert len(events) == 2
+    assert events[1].details["http_status"] == 200
+    assert events[1].details["http_body_preview"] == "Welcome admin"
+
+
 def test_tshark_normalization_preserves_protocol_details_and_skips_non_ip_flows(
     tmp_path: Path,
 ) -> None:
@@ -377,5 +422,4 @@ def test_tshark_normalization_preserves_protocol_details_and_skips_non_ip_flows(
     assert flows[0].application == "snmp"
     assert events[0].application == "snmp"
     assert events[0].details["snmp_version"] == 0
-    assert events[1].src_ip is None
-    assert events[1].application == "stp"
+    assert len(events) == 1

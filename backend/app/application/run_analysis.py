@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 from backend.app.analyzers.command import Analyzer
@@ -46,6 +47,7 @@ class AnalysisService:
         self._normalization_service = normalization_service
         self._detection_service = detection_service
         self._enrichment_service = enrichment_service
+        self._execution_lock = Lock()
 
     def create(self, capture_id: str) -> Analysis:
         if self._capture_repository.get(capture_id) is None:
@@ -72,6 +74,12 @@ class AnalysisService:
         return self._analysis_repository.list_for_capture(capture_id, limit)
 
     def run(self, analysis_id: str) -> None:
+        # Large captures are intentionally serialized in the embedded deployment. This prevents
+        # concurrent TShark/Suricata processes from exhausting workstation memory.
+        with self._execution_lock:
+            self._run_exclusive(analysis_id)
+
+    def _run_exclusive(self, analysis_id: str) -> None:
         analysis = self.get(analysis_id)
         if analysis.status is AnalysisStatus.CANCELED:
             return
@@ -156,6 +164,9 @@ class AnalysisService:
             else:
                 final_status = AnalysisStatus.FAILED
 
+        if self.get(analysis_id).status is AnalysisStatus.CANCELED:
+            return
+
         detection_completed = False
         if normalization_completed:
             try:
@@ -174,6 +185,9 @@ class AnalysisService:
             except Exception:
                 failure_count += 1
                 final_status = AnalysisStatus.COMPLETED_WITH_WARNINGS
+
+        if self.get(analysis_id).status is AnalysisStatus.CANCELED:
+            return
 
         self._analysis_repository.update_status(
             analysis_id,

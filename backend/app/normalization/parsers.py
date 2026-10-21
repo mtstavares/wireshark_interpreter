@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import json
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
-from typing import Any, cast
+from typing import IO, Any, cast
 from uuid import NAMESPACE_URL, uuid5
 
 from backend.app.domain.network import NetworkEvent, NetworkFlow
@@ -67,23 +69,30 @@ def parse_suricata_directory(
 
 
 def parse_tshark_directory(
-    analysis_id: str, directory: Path, *, deadline: float | None = None
+    analysis_id: str,
+    directory: Path,
+    *,
+    deadline: float | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> tuple[list[NetworkFlow], list[NetworkEvent]]:
     path = directory / "stdout.log"
+    if not path.is_file():
+        path = directory / "stdout.log.gz"
     if not path.is_file() or path.stat().st_size == 0:
         return [], []
     flows_by_key: dict[tuple[tuple[str, int], tuple[str, int], str], NetworkFlow] = {}
     events: list[NetworkEvent] = []
-    authentication = TsharkAuthenticationTracker(analysis_id)
-    with path.open(encoding="utf-8", errors="replace", newline="") as source:
+    authentication = TsharkAuthenticationTracker(analysis_id, path.name)
+    with _open_tshark_output(path) as source:
         for index, row in enumerate(csv.DictReader(source, delimiter="\t"), start=1):
             if index % 4096 == 0:
-                _check_deadline(deadline)
-            flow = _tshark_packet_flow(analysis_id, row, index)
+                _check_deadline(deadline, cancelled)
+            flow = _tshark_packet_flow(analysis_id, row, index, path.name)
             if flow is not None:
                 _aggregate_packet(flows_by_key, flow)
-            packet_event = _tshark_packet_event(analysis_id, row, index)
-            events.append(packet_event)
+            packet_event = _tshark_packet_event(analysis_id, row, index, path.name)
+            if _should_persist_tshark_packet(row):
+                events.append(packet_event)
             events.extend(
                 authentication.consume(
                     row,
@@ -96,8 +105,20 @@ def parse_tshark_directory(
                 )
             )
     events.extend(authentication.finish())
-    _check_deadline(deadline)
+    _check_deadline(deadline, cancelled)
     return list(flows_by_key.values()), events
+
+
+@contextmanager
+def _open_tshark_output(path: Path) -> Generator[IO[str]]:
+    if path.suffix == ".gz":
+        with gzip.open(
+            path, "rt", encoding="utf-8", errors="replace", newline=""
+        ) as source:
+            yield source
+    else:
+        with path.open(encoding="utf-8", errors="replace", newline="") as source:
+            yield source
 
 
 def merge_flows(
@@ -105,6 +126,7 @@ def merge_flows(
     candidates: Iterable[NetworkFlow],
     *,
     deadline: float | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> list[NetworkFlow]:
     priority = {"zeek": 0, "suricata": 1, "tshark": 2}
     ordered = sorted(
@@ -116,7 +138,7 @@ def merge_flows(
 
     for index, candidate in enumerate(ordered, start=1):
         if index % 4096 == 0:
-            _check_deadline(deadline)
+            _check_deadline(deadline, cancelled)
         key = _canonical_tuple(candidate)
         bucket = flows_by_key.setdefault(key, [])
         match = next((flow for flow in bucket if _same_communication(flow, candidate)), None)
@@ -136,14 +158,14 @@ def merge_flows(
         match.dest_bytes = max(match.dest_bytes, candidate_dest_bytes)
         match.src_packets = max(match.src_packets, candidate_src_packets)
         match.dest_packets = max(match.dest_packets, candidate_dest_packets)
-        match.application = match.application or candidate.application
+        match.application = _preferred_application(match.application, candidate.application)
         match.sources = sorted(
             set(match.sources + candidate.sources),
             key=lambda value: priority.get(value, 99),
         )
         match.external_ids = sorted(set(match.external_ids + candidate.external_ids))
         match.evidence_refs = _merge_evidence_refs(match.evidence_refs, candidate.evidence_refs)
-    _check_deadline(deadline)
+    _check_deadline(deadline, cancelled)
     return merged
 
 
@@ -173,7 +195,13 @@ def _aggregate_packet(
     else:
         match.dest_bytes += packet.src_bytes
         match.dest_packets += packet.src_packets
+    match.application = _preferred_application(match.application, packet.application)
     match.evidence_refs = _merge_evidence_refs(match.evidence_refs, packet.evidence_refs)
+
+
+def _preferred_application(current: str | None, candidate: str | None) -> str | None:
+    generic = {None, "", "ip", "tcp", "udp"}
+    return candidate if current in generic and candidate not in generic else current
 
 
 def _merge_evidence_refs(current: list[str], incoming: Iterable[str]) -> list[str]:
@@ -206,7 +234,11 @@ def _read_ndjson(
     _check_deadline(deadline)
 
 
-def _check_deadline(deadline: float | None) -> None:
+def _check_deadline(
+    deadline: float | None, cancelled: Callable[[], bool] | None = None
+) -> None:
+    if cancelled is not None and cancelled():
+        raise InterruptedError("Normalization canceled")
     if deadline is not None and monotonic() > deadline:
         raise TimeoutError("Normalization exceeded its configured timeout")
 
@@ -318,7 +350,9 @@ def _suricata_event(analysis_id: str, item: Mapping[str, Any], reference: str) -
     )
 
 
-def _tshark_packet_flow(analysis_id: str, row: Mapping[str, Any], index: int) -> NetworkFlow | None:
+def _tshark_packet_flow(
+    analysis_id: str, row: Mapping[str, Any], index: int, source_name: str = "stdout.log"
+) -> NetworkFlow | None:
     transport = "tcp" if row.get("tcp.srcport") else "udp" if row.get("udp.srcport") else "ip"
     src_ip = _text(row.get("ip.src") or row.get("ipv6.src"))
     dest_ip = _text(row.get("ip.dst") or row.get("ipv6.dst"))
@@ -326,7 +360,7 @@ def _tshark_packet_flow(analysis_id: str, row: Mapping[str, Any], index: int) ->
     if src_ip is None or dest_ip is None or occurred_at is None:
         return None
     length = _int(row.get("frame.len")) or 0
-    reference = f"tshark/stdout.log:packet:{index}"
+    reference = f"tshark/{source_name}:packet:{index}"
     return NetworkFlow(
         id="",
         analysis_id=analysis_id,
@@ -348,9 +382,11 @@ def _tshark_packet_flow(analysis_id: str, row: Mapping[str, Any], index: int) ->
     )
 
 
-def _tshark_packet_event(analysis_id: str, row: Mapping[str, Any], index: int) -> NetworkEvent:
+def _tshark_packet_event(
+    analysis_id: str, row: Mapping[str, Any], index: int, source_name: str = "stdout.log"
+) -> NetworkEvent:
     transport = "tcp" if row.get("tcp.srcport") else "udp" if row.get("udp.srcport") else None
-    reference = f"tshark/stdout.log:packet:{index}"
+    reference = f"tshark/{source_name}:packet:{index}"
     return NetworkEvent(
         id=str(uuid5(NAMESPACE_URL, f"{analysis_id}:{reference}")),
         analysis_id=analysis_id,
@@ -428,9 +464,42 @@ def _tshark_details(row: Mapping[str, Any], index: int) -> dict[str, Any]:
         "tcp_stream": _int(row.get("tcp.stream")),
         "snmp_version": _int(row.get("snmp.version")),
         "dns_query": _text(row.get("dns.qry.name")),
+        "http_method": _text(row.get("http.request.method")),
+        "http_host": _text(row.get("http.host")),
+        "http_uri": _text(row.get("http.request.uri")),
+        "http_form_keys": _text(row.get("urlencoded-form.key")),
+        "http_form_values": _text(row.get("urlencoded-form.value")),
+        "http_status": _int(row.get("http.response.code")),
+        "http_body_preview": _http_body_preview(row.get("http.file_data")),
     }
     details.update({key: value for key, value in optional.items() if value is not None})
     return details
+
+
+def _http_body_preview(value: Any) -> str | None:
+    encoded = _text(value)
+    if encoded is None:
+        return None
+    compact = encoded.replace(":", "")
+    try:
+        decoded = bytes.fromhex(compact).decode("utf-8", errors="replace")
+    except ValueError:
+        decoded = encoded
+    normalized = " ".join(decoded.replace("\x00", " ").split())
+    return normalized[:300] or None
+
+
+def _should_persist_tshark_packet(row: Mapping[str, Any]) -> bool:
+    """Keep evidence useful to detectors instead of duplicating every packet in SQLite."""
+    if _text(row.get("dns.qry.name")) is not None:
+        return True
+    if _text(row.get("snmp.version")) is not None:
+        return True
+    if _text(row.get("http.request.method")) is not None:
+        return True
+    # Reset/retransmission bursts remain only in the compressed TShark evidence so they cannot
+    # recreate one-row-per-packet growth on large or noisy captures.
+    return _text(row.get("http.response.code")) is not None
 
 
 def _text(value: Any) -> str | None:

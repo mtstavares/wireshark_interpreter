@@ -4,6 +4,7 @@ import { AppShell } from "./components";
 import { AboutPage } from "./pages/AboutPage";
 import { AnalysisPage } from "./pages/AnalysisPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { QualityPage } from "./pages/QualityPage";
 import { UploadPage } from "./pages/UploadPage";
 
 export default function App() {
@@ -12,6 +13,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/captures/new" element={<UploadPage />} />
+        <Route path="/quality" element={<QualityPage />} />
         <Route path="/analyses/:analysisId" element={<AnalysisPage section="overview" />} />
         <Route path="/analyses/:analysisId/findings" element={<AnalysisPage section="findings" />} />
         <Route path="/analyses/:analysisId/network" element={<AnalysisPage section="network" />} />

@@ -11,6 +11,7 @@ from ipaddress import ip_address, ip_network
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, cast
+from urllib.parse import unquote_plus
 from uuid import NAMESPACE_URL, uuid5
 
 from backend.app.domain.findings import (
@@ -22,7 +23,7 @@ from backend.app.domain.findings import (
 )
 from backend.app.domain.network import NetworkEvent, NetworkFlow
 
-DETECTOR_VERSION = "1.1.0"
+DETECTOR_VERSION = "1.2.0"
 MAX_EVIDENCE = 25
 
 
@@ -41,6 +42,7 @@ class DetectorConfig:
     password_spray_users: int = 5
     dns_suspicious_queries: int = 3
     beacon_min_connections: int = 5
+    beacon_min_interval_seconds: float = 5.0
     beacon_max_variation: float = 0.25
 
 
@@ -196,6 +198,12 @@ class AuthenticationDetector:
             ]
             if not preceding_failures:
                 continue
+            success_password = _password(success)
+            failed_passwords = _ordered_passwords(preceding_failures)
+            successful_credential = f"usando o usuário {username}"
+            if success_password is not None:
+                successful_credential += f" e senha {_quoted(success_password)}"
+            failed_credentials = _failed_passwords_clause(failed_passwords)
             findings.append(
                 _event_finding(
                     context,
@@ -210,8 +218,9 @@ class AuthenticationDetector:
                     confidence=min(0.98, 0.75 + len(preceding_failures) * 0.03),
                     summary=(
                         f"O IP {success.src_ip} teve sucesso ao autenticar via "
-                        f"{application.upper()} no IP {success.dest_ip}, usando o usuário "
-                        f"{username}, após {len(preceding_failures)} tentativa(s) malsucedida(s)."
+                        f"{application.upper()} no IP {success.dest_ip}, "
+                        f"{successful_credential}, após {len(preceding_failures)} "
+                        f"tentativa(s) malsucedida(s){failed_credentials}."
                     ),
                     events=[*preceding_failures, success],
                     source_ip=success.src_ip,
@@ -443,6 +452,9 @@ class CleartextProtocolDetector:
         for flow in context.flows:
             if flow.dest_port in self._ports:
                 service = self._ports[flow.dest_port][0]
+                application = (flow.application or "").lower()
+                if application != service and not application.startswith(f"{service}-"):
+                    continue
                 grouped[(flow.dest_ip, flow.dest_port, service)].append(flow)
 
         findings: list[Finding] = []
@@ -534,6 +546,100 @@ class DnsAnomalyDetector:
         return findings
 
 
+class WebAttackPayloadDetector:
+    name = "web-attack-payload"
+
+    _patterns: ClassVar[tuple[tuple[str, str, Severity, tuple[str, ...], str], ...]] = (
+        (
+            "SQL injection",
+            "initial-access",
+            Severity.HIGH,
+            (" or '1'='1", " union select ", "sleep(", "benchmark(", "--"),
+            "T1190",
+        ),
+        (
+            "injeção de comandos",
+            "initial-access",
+            Severity.HIGH,
+            (";cat ", "&&", "|/bin/", "$(", "`id`"),
+            "T1190",
+        ),
+        (
+            "cross-site scripting (XSS)",
+            "web-attack",
+            Severity.MEDIUM,
+            ("<script", "javascript:", "onerror=", "onload="),
+            "T1189",
+        ),
+        (
+            "path traversal",
+            "initial-access",
+            Severity.HIGH,
+            ("../", "..\\", "/etc/passwd", "win.ini"),
+            "T1190",
+        ),
+    )
+
+    def detect(self, context: DetectionContext) -> list[Finding]:
+        findings: list[Finding] = []
+        responses_by_stream: dict[int, list[NetworkEvent]] = defaultdict(list)
+        for candidate in context.events:
+            stream = _safe_int(candidate.details.get("tcp_stream"))
+            status = _safe_int(candidate.details.get("http_status"))
+            if stream is not None and status is not None:
+                responses_by_stream[stream].append(candidate)
+        for event in context.events:
+            if event.source != "tshark" or event.event_type != "packet":
+                continue
+            method = _detail_text(event, "http_method")
+            if method is None:
+                continue
+            uri = unquote_plus(_detail_text(event, "http_uri") or "")
+            form_values = _detail_text(event, "http_form_values") or ""
+            inspected = f" {uri} {form_values} ".lower()
+            observed_payload = (form_values or uri)[:300]
+            stream = _safe_int(event.details.get("tcp_stream"))
+            response_candidates = responses_by_stream.get(stream, []) if stream is not None else []
+            response = _following_http_response(event, response_candidates)
+            for attack, category, severity, patterns, technique in self._patterns:
+                if not any(pattern in inspected for pattern in patterns):
+                    continue
+                response_summary, assertion, confidence = _http_response_assessment(response)
+                findings.append(
+                    _event_finding(
+                        context,
+                        self.name,
+                        key=f"{event.id}:{attack}",
+                        title=f"Requisição HTTP com indício de {attack}",
+                        category=category,
+                        severity=severity,
+                        confidence=confidence,
+                        assertion_status=assertion,
+                        summary=(
+                            f"O IP {event.src_ip or 'desconhecido'} enviou uma requisição "
+                            f"{method} para {event.dest_ip or 'destino desconhecido'} contendo "
+                            f"um padrão compatível com {attack}; o padrão é "
+                            f"{_quoted(observed_payload)}. A captura comprova a tentativa. "
+                            f"{response_summary}"
+                        ),
+                        events=[event, *([response] if response is not None else [])],
+                        source_ip=event.src_ip,
+                        destination_ip=event.dest_ip,
+                        destination_port=event.dest_port,
+                        mitigations=[
+                            "Valide e normalize toda entrada no servidor antes de processá-la.",
+                            "Use consultas parametrizadas e evite comandos construídos "
+                            "por concatenação.",
+                            "Correlacione a requisição com logs da aplicação e do endpoint "
+                            "de destino.",
+                        ],
+                        mitre_attack=[technique],
+                    )
+                )
+                break
+        return findings
+
+
 class LegacySnmpDetector:
     name = "legacy-snmp"
 
@@ -602,7 +708,7 @@ class BeaconingDetector:
             if len(intervals) < self._config.beacon_min_connections - 1:
                 continue
             mean_interval = statistics.mean(intervals)
-            if mean_interval <= 0:
+            if mean_interval < self._config.beacon_min_interval_seconds:
                 continue
             variation = statistics.pstdev(intervals) / mean_interval
             if variation > self._config.beacon_max_variation:
@@ -694,6 +800,7 @@ def default_detectors(
         AuthenticationDetector(detector_config),
         CleartextCredentialDetector(credential_policy),
         CleartextProtocolDetector(),
+        WebAttackPayloadDetector(),
         LegacySnmpDetector(),
         DnsAnomalyDetector(detector_config),
         BeaconingDetector(detector_config),
@@ -844,9 +951,102 @@ def _username(event: NetworkEvent) -> str | None:
     return None
 
 
+def _password(event: NetworkEvent) -> str | None:
+    for key, value in _flatten_details(event.details):
+        if key.endswith(("password", "passwd")) and value:
+            return str(value)[:512]
+    return None
+
+
+def _ordered_passwords(events: Iterable[NetworkEvent]) -> list[str]:
+    passwords: list[str] = []
+    seen: set[str] = set()
+    for event in events:
+        password = _password(event)
+        if password is None or password in seen:
+            continue
+        passwords.append(password)
+        seen.add(password)
+    return passwords
+
+
+def _failed_passwords_clause(passwords: list[str]) -> str:
+    if not passwords:
+        return ""
+    label = "a senha" if len(passwords) == 1 else "as senhas"
+    return f", usando {label} {_natural_language_list([_quoted(value) for value in passwords])}"
+
+
+def _natural_language_list(values: list[str]) -> str:
+    if len(values) <= 1:
+        return "".join(values)
+    return f"{', '.join(values[:-1])} e {values[-1]}"
+
+
+def _quoted(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _detail_text(event: NetworkEvent, name: str) -> str | None:
     value = event.details.get(name)
     return str(value) if value is not None and str(value) else None
+
+
+def _following_http_response(
+    request: NetworkEvent, candidates: Iterable[NetworkEvent]
+) -> NetworkEvent | None:
+    responses = [
+        event
+        for event in candidates
+        if request.occurred_at is None
+        or event.occurred_at is None
+        or event.occurred_at >= request.occurred_at
+    ]
+    return min(
+        responses,
+        key=lambda event: event.occurred_at.timestamp() if event.occurred_at else float("inf"),
+        default=None,
+    )
+
+
+def _http_response_assessment(
+    response: NetworkEvent | None,
+) -> tuple[str, AssertionStatus, float]:
+    if response is None:
+        return (
+            "Não foi localizada uma resposta HTTP correlacionada; não é possível determinar "
+            "o resultado da tentativa.",
+            AssertionStatus.POTENTIAL,
+            0.82,
+        )
+    status = _safe_int(response.details.get("http_status"))
+    body = _detail_text(response, "http_body_preview")
+    response_text = f"O servidor respondeu HTTP {status or 'desconhecido'}"
+    if body:
+        response_text += f" e retornou {_quoted(body)}"
+    response_text += "."
+    success_markers = ("welcome", "logged in", "login successful", "authenticated")
+    if status is not None and 200 <= status < 400 and body and any(
+        marker in body.lower() for marker in success_markers
+    ):
+        return (
+            f"{response_text} O conjunto indica possível exploração bem-sucedida, mas deve "
+            "ser confirmado nos logs da aplicação.",
+            AssertionStatus.INFERRED,
+            0.93,
+        )
+    if status is not None and 400 <= status < 500:
+        return (
+            f"{response_text} A resposta indica rejeição da requisição, mas não elimina a "
+            "necessidade de revisar os logs da aplicação.",
+            AssertionStatus.OBSERVED,
+            0.90,
+        )
+    return (
+        f"{response_text} Uma resposta HTTP isolada não comprova exploração bem-sucedida.",
+        AssertionStatus.POTENTIAL,
+        0.88,
+    )
 
 
 def _credential_description(username: str | None, password: str | None) -> str:

@@ -16,6 +16,8 @@ Cadência sugerida: uma semana por sprint. Cada sprint termina com demonstraçã
 | 8 — Validação segura | Concluída | Política deny-by-default, dupla aprovação, teste TCP sem payload e auditoria |
 | 9 — Consolidação selecionada | Concluída | Corpus, benchmark, hardening, migrations e relatório final |
 | 10 — Autenticação forense | Concluída | Credenciais em texto claro, correlação de respostas e política local |
+| 11 — Desempenho e estabilidade | Concluída | Corpus abrangente, 638 MB de pico e 94,6 s para 50 MB |
+| 12 — Qualidade das detecções | Concluída | Regressão ponta a ponta: TP 23, FP 0, FN 0 |
 | LLM opcional | Adiada | Somente após a consolidação |
 
 ## Sprint 1 — Fundação e ingestão segura
@@ -183,6 +185,41 @@ Critério de aceite: uma troca FTP `USER`/`PASS` seguida de `230` produz um find
 de autenticação bem-sucedida com evidência dos pacotes; política `deny` pode elevar
 um sucesso fora das regras para crítico e não há afirmação equivalente para SSH,
 TLS ou HTTP ambíguo.
+
+## Sprint 11 — Desempenho e estabilidade
+
+Objetivo: tornar capturas grandes previsíveis em uma estação de trabalho e criar
+uma referência abrangente para regressões.
+
+- PCAP sintético com scans, autenticações FTP/Telnet/HTTP, ataques web, DNS
+  tunneling, beaconing e sessões SSH criptografadas.
+- Persistência apenas de eventos com valor de segurança; fluxos continuam
+  agregando todos os pacotes.
+- Evidência tabular completa do TShark comprimida em Gzip.
+- Fila local com uma análise pesada por vez, cancelamento durante normalização,
+  paginação e inventário em lotes.
+- Benchmark de 50 MB: 94,6 segundos, pico de 638 MB e 56,6 MB de dados.
+
+Critério de aceite: captura de 50 MB abaixo de 120 segundos, 1 GB de memória e
+250 MB de dados, com análise concluída e evidência preservada.
+
+Roteiro: [`19-TESTE-MANUAL-SPRINT-11.md`](19-TESTE-MANUAL-SPRINT-11.md).
+
+## Sprint 12 — Qualidade e precisão das detecções
+
+Objetivo: medir o pipeline completo e tornar cada conclusão proporcional à evidência disponível.
+
+- Expectativas detalhadas para os 13 cenários da captura abrangente.
+- Métricas TP/FP/FN e precisão/recall por detector.
+- Correlação HTTP por fluxo, status e corpo de resposta.
+- Separação entre tentativa observada, possível sucesso e rejeição.
+- Remoção de alertas de protocolo baseados somente na porta.
+- Página de cobertura na interface e baseline versionado.
+
+Critério de aceite: validação estrita com 23 verdadeiros positivos, nenhum falso positivo, nenhum
+falso negativo e limitações do corpus visíveis na aplicação.
+
+Roteiro: [`20-TESTE-MANUAL-SPRINT-12.md`](20-TESTE-MANUAL-SPRINT-12.md).
 
 ## Sprint futura — LLM opcional
 

@@ -645,22 +645,37 @@ class NetworkRepository:
             normalization.completed_at = completed_at
             normalization.error_message = error[:2000]
 
-    def list_flows(self, analysis_id: str, limit: int = 100) -> list[NetworkFlow]:
+    def cancel_normalization(self, analysis_id: str, completed_at: datetime) -> None:
+        with self._session_factory.begin() as session:
+            normalization = session.get(NormalizationRecord, analysis_id)
+            if normalization is None:
+                raise KeyError(analysis_id)
+            normalization.status = NormalizationStatus.CANCELED.value
+            normalization.completed_at = completed_at
+            normalization.error_message = None
+
+    def list_flows(
+        self, analysis_id: str, limit: int = 100, offset: int = 0
+    ) -> list[NetworkFlow]:
         statement = (
             select(NetworkFlowRecord)
             .where(NetworkFlowRecord.analysis_id == analysis_id)
             .order_by(NetworkFlowRecord.start_time)
+            .offset(offset)
             .limit(limit)
         )
         with self._session_factory() as session:
             records = session.scalars(statement).all()
             return [_flow_to_domain(record) for record in records]
 
-    def list_events(self, analysis_id: str, limit: int = 100) -> list[NetworkEvent]:
+    def list_events(
+        self, analysis_id: str, limit: int = 100, offset: int = 0
+    ) -> list[NetworkEvent]:
         statement = (
             select(NetworkEventRecord)
             .where(NetworkEventRecord.analysis_id == analysis_id)
             .order_by(NetworkEventRecord.occurred_at)
+            .offset(offset)
             .limit(limit)
         )
         with self._session_factory() as session:
@@ -668,15 +683,25 @@ class NetworkRepository:
             return [_event_to_domain(record) for record in records]
 
     def inventory(self, analysis_id: str) -> NetworkInventory:
-        flows = self.list_flows(analysis_id, limit=100_000)
         hosts: dict[str, _HostAccumulator] = {}
         services: dict[tuple[str, int, str, str | None], int] = {}
-        for flow in flows:
-            _update_host(hosts, flow.src_ip, flow, sent=flow.src_bytes, received=flow.dest_bytes)
-            _update_host(hosts, flow.dest_ip, flow, sent=flow.dest_bytes, received=flow.src_bytes)
-            if flow.dest_port is not None:
-                key = (flow.dest_ip, flow.dest_port, flow.transport, flow.application)
-                services[key] = services.get(key, 0) + 1
+        offset = 0
+        batch_size = 5_000
+        while True:
+            flows = self.list_flows(analysis_id, limit=batch_size, offset=offset)
+            for flow in flows:
+                _update_host(
+                    hosts, flow.src_ip, flow, sent=flow.src_bytes, received=flow.dest_bytes
+                )
+                _update_host(
+                    hosts, flow.dest_ip, flow, sent=flow.dest_bytes, received=flow.src_bytes
+                )
+                if flow.dest_port is not None:
+                    key = (flow.dest_ip, flow.dest_port, flow.transport, flow.application)
+                    services[key] = services.get(key, 0) + 1
+            if len(flows) < batch_size:
+                break
+            offset += batch_size
         return NetworkInventory(
             hosts=[
                 HostInventory(

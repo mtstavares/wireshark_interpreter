@@ -18,6 +18,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav aria-label="Navegação principal">
           <NavLink to="/" end>Visão geral</NavLink>
           <NavLink to="/captures/new">Nova análise</NavLink>
+          <NavLink to="/quality">Cobertura</NavLink>
           <NavLink to="/about">Sobre o projeto</NavLink>
         </nav>
         <div className="sidebar-foot">
@@ -73,6 +74,9 @@ export function StatusBadge({ status }: { status: string }) {
     observed: "Observado",
     inferred: "Inferido",
     signature_match: "Assinatura",
+    potential: "Potencial",
+    confirmed: "Confirmado",
+    false_positive: "Falso positivo",
     awaiting_approval: "Aguardando aprovação",
     blocked: "Bloqueada",
     approved: "Aprovada",

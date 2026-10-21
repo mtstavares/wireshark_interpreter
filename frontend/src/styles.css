@@ -224,7 +224,8 @@ progress { width: 100%; height: 8px; border: 0; border-radius: 8px; overflow: hi
   .sidebar nav a { min-height: 44px; display: grid; place-items: center; }
   .sidebar nav a::before { font-size: 1rem; content: "•"; }
   .sidebar nav a:nth-child(2)::before { content: "+"; }
-  .sidebar nav a:nth-child(3)::before { content: "i"; }
+  .sidebar nav a:nth-child(3)::before { content: "✓"; }
+  .sidebar nav a:nth-child(4)::before { content: "i"; }
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .pipeline { grid-template-columns: repeat(3, 1fr); }
   .service-chips { grid-template-columns: repeat(2, 1fr); }

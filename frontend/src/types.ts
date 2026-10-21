@@ -290,3 +290,27 @@ export interface SecurityReport {
 export interface RecentAnalysis extends Analysis {
   capture_name: string;
 }
+
+export interface DetectorQuality {
+  detector: string;
+  true_positive: number;
+  false_positive: number;
+  false_negative: number;
+  precision: number;
+  recall: number;
+}
+
+export interface QualityCoverage {
+  schema_version: string;
+  capture: string;
+  capture_sha256: string;
+  detector_version: string;
+  validated_on: string;
+  true_positive: number;
+  false_positive: number;
+  false_negative: number;
+  precision: number;
+  recall: number;
+  detectors: DetectorQuality[];
+  limitations: string[];
+}

@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-*/
+.tmp/
 .ruff_cache/
 .coverage
 htmlcov/
@@ -11,6 +13,7 @@ reports/
 node_modules/
 dist/
 build/
+release/
 *.egg-info/
 *.pcap
 *.pcapng

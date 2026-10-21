@@ -93,6 +93,8 @@ def test_tshark_command_disables_resolution_and_outputs_selected_fields() -> Non
     assert "_ws.col.protocol" in arguments
     assert "snmp.version" in arguments
     assert "tcp.analysis.retransmission" in arguments
+    assert "http.request.uri" in arguments
+    assert "urlencoded-form.value" in arguments
 
 
 def test_missing_executable_is_reported_as_unavailable(tmp_path: Path) -> None:

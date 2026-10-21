@@ -68,6 +68,9 @@ def read_pcap_flows(path: Path) -> list[NetworkFlow]:
         ip_header_length = (packet[14] & 0x0F) * 4
         transport_offset = 14 + ip_header_length
         src_port, dest_port = struct.unpack_from("!HH", packet, transport_offset)
+        tcp_header_length = (packet[transport_offset + 12] >> 4) * 4
+        application_payload = packet[transport_offset + tcp_header_length :]
+        application = _application_protocol(src_port, dest_port, application_payload)
         occurred_at = datetime.fromtimestamp(seconds, UTC) + timedelta(microseconds=micros)
         flows.append(
             NetworkFlow(
@@ -82,7 +85,7 @@ def read_pcap_flows(path: Path) -> list[NetworkFlow]:
                 dest_ip=socket.inet_ntoa(packet[30:34]),
                 dest_port=dest_port,
                 transport="tcp",
-                application=None,
+                application=application,
                 src_bytes=len(packet),
                 dest_bytes=0,
                 src_packets=1,
@@ -91,3 +94,13 @@ def read_pcap_flows(path: Path) -> list[NetworkFlow]:
             )
         )
     return flows
+
+
+def _application_protocol(src_port: int, dest_port: int, payload: bytes) -> str | None:
+    if not payload:
+        return None
+    ports = {src_port, dest_port}
+    for port, application in {21: "ftp", 23: "telnet", 80: "http"}.items():
+        if port in ports:
+            return application
+    return None

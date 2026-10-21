@@ -24,6 +24,7 @@ from backend.app.api.schemas import (
     NetworkFlowResponse,
     NetworkInventoryResponse,
     ProblemDetail,
+    QualityCoverageResponse,
     SecurityReportResponse,
     ValidationApprovalRequest,
     ValidationPlanRequest,
@@ -51,6 +52,7 @@ from backend.app.application.validate_finding import (
 )
 from backend.app.domain.findings import Severity
 from backend.app.domain.reports import SecurityReport
+from backend.app.evaluation.baseline import quality_baseline
 from backend.app.infrastructure.database import (
     CaptureRepository,
     FindingRepository,
@@ -97,6 +99,15 @@ def _validation_service(request: Request) -> ValidationService:
 @router.get("/healthz", tags=["system"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get(
+    "/api/v1/quality/coverage",
+    response_model=QualityCoverageResponse,
+    tags=["quality"],
+)
+def quality_coverage() -> QualityCoverageResponse:
+    return QualityCoverageResponse.model_validate(quality_baseline())
 
 
 @router.post(
@@ -214,15 +225,18 @@ def list_analyses(capture_id: str, request: Request, limit: int = 50) -> list[An
     response_model=list[NetworkFlowResponse],
     tags=["network"],
 )
-def list_flows(analysis_id: str, request: Request, limit: int = 100) -> list[NetworkFlowResponse]:
+def list_flows(
+    analysis_id: str, request: Request, limit: int = 100, offset: int = 0
+) -> list[NetworkFlowResponse]:
     try:
         _analysis_service(request).get(analysis_id)
     except AnalysisNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Analysis not found") from exc
     safe_limit = min(max(limit, 1), 1000)
+    safe_offset = max(offset, 0)
     return [
         NetworkFlowResponse.model_validate(flow)
-        for flow in _network_repository(request).list_flows(analysis_id, safe_limit)
+        for flow in _network_repository(request).list_flows(analysis_id, safe_limit, safe_offset)
     ]
 
 
@@ -231,15 +245,18 @@ def list_flows(analysis_id: str, request: Request, limit: int = 100) -> list[Net
     response_model=list[NetworkEventResponse],
     tags=["network"],
 )
-def list_events(analysis_id: str, request: Request, limit: int = 100) -> list[NetworkEventResponse]:
+def list_events(
+    analysis_id: str, request: Request, limit: int = 100, offset: int = 0
+) -> list[NetworkEventResponse]:
     try:
         _analysis_service(request).get(analysis_id)
     except AnalysisNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Analysis not found") from exc
     safe_limit = min(max(limit, 1), 1000)
+    safe_offset = max(offset, 0)
     return [
         NetworkEventResponse.model_validate(event)
-        for event in _network_repository(request).list_events(analysis_id, safe_limit)
+        for event in _network_repository(request).list_events(analysis_id, safe_limit, safe_offset)
     ]
 
 

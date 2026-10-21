@@ -39,6 +39,30 @@ class ProblemDetail(BaseModel):
     detail: str
 
 
+class DetectorQualityResponse(BaseModel):
+    detector: str
+    true_positive: int
+    false_positive: int
+    false_negative: int
+    precision: float
+    recall: float
+
+
+class QualityCoverageResponse(BaseModel):
+    schema_version: str
+    capture: str
+    capture_sha256: str
+    detector_version: str
+    validated_on: str
+    true_positive: int
+    false_positive: int
+    false_negative: int
+    precision: float
+    recall: float
+    detectors: list[DetectorQualityResponse]
+    limitations: list[str]
+
+
 class ArtifactResponse(BaseModel):
     path: str
     size_bytes: int

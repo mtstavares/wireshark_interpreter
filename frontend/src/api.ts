@@ -7,6 +7,7 @@ import type {
   Flow,
   Inventory,
   NetworkEvent,
+  QualityCoverage,
   RecentAnalysis,
   SecurityReport,
   Validation,
@@ -38,6 +39,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ status: string }>("/healthz"),
+  qualityCoverage: () => request<QualityCoverage>("/api/v1/quality/coverage"),
   captures: () => request<Capture[]>("/api/v1/captures?limit=50"),
   capture: (id: string) => request<Capture>(`/api/v1/captures/${id}`),
   analysesForCapture: (captureId: string) =>

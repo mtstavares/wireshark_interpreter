@@ -62,15 +62,30 @@ def main() -> None:
                 data_size = sum(
                     path.stat().st_size for path in settings.data_dir.rglob("*") if path.is_file()
                 )
+                sqlite_size = sum(
+                    path.stat().st_size
+                    for path in settings.data_dir.glob(f"{settings.database_path.name}*")
+                    if path.is_file()
+                )
                 results.append(
                     {
                         "capture": capture_path.name,
                         "input_bytes": capture_path.stat().st_size,
                         "elapsed_seconds": round(elapsed, 3),
                         "peak_rss_bytes": peak_rss[0],
-                        "database_bytes": settings.database_path.stat().st_size,
+                        "database_bytes": sqlite_size,
                         "data_directory_bytes": data_size,
                         "analysis_status": analysis["status"],
+                        "normalized_flows": analysis.get("normalization", {}).get(
+                            "flow_count", 0
+                        ),
+                        "persisted_events": analysis.get("normalization", {}).get(
+                            "event_count", 0
+                        ),
+                        "analyzer_duration_ms": sum(
+                            run.get("duration_ms") or 0
+                            for run in analysis.get("analyzer_runs", [])
+                        ),
                     }
                 )
     output = Path(args.output)

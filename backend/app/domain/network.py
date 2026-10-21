@@ -11,6 +11,7 @@ class NormalizationStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELED = "canceled"
 
 
 @dataclass(frozen=True, slots=True)

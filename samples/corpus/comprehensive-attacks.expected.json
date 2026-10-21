@@ -1,0 +1,164 @@
+{
+  "schema_version": "1.0",
+  "file": "comprehensive-attacks.pcap",
+  "purpose": "Offline synthetic regression fixture. No traffic was sent to real systems.",
+  "contains_only_fictitious_credentials": true,
+  "packet_count": 367,
+  "sha256": "fafad737ba42e53faf3ed15c15d08f808430c7383687741ab99bdbd369c15099",
+  "scenarios": [
+    {
+      "id": "benign-baseline",
+      "expected": "no finding"
+    },
+    {
+      "id": "vertical-port-scan",
+      "source": "198.51.100.66",
+      "target": "10.10.0.20"
+    },
+    {
+      "id": "horizontal-smb-scan",
+      "source": "198.51.100.66",
+      "targets": 15
+    },
+    {
+      "id": "ftp-brute-force-success",
+      "source": "198.51.100.70",
+      "username": "backup",
+      "failed_passwords": [
+        "admin",
+        "password1",
+        "summer2026"
+      ],
+      "successful_password": "Backup!2026"
+    },
+    {
+      "id": "telnet-brute-force-success",
+      "source": "198.51.100.71",
+      "username": "operator",
+      "failed_passwords": [
+        "root",
+        "toor",
+        "123456"
+      ],
+      "successful_password": "Telnet!2026"
+    },
+    {
+      "id": "sql-injection",
+      "source": "198.51.100.72",
+      "http_status": 200
+    },
+    {
+      "id": "path-traversal",
+      "source": "198.51.100.72",
+      "http_status": 200
+    },
+    {
+      "id": "xss",
+      "source": "198.51.100.72",
+      "http_status": 200
+    },
+    {
+      "id": "command-injection",
+      "source": "198.51.100.72",
+      "http_status": 200
+    },
+    {
+      "id": "http-basic-success",
+      "username": "admin",
+      "successful_password": "Admin!2026"
+    },
+    {
+      "id": "ssh-repeated-attempts-inferred-success",
+      "source": "198.51.100.74",
+      "attempts": 4,
+      "limitation": "SSH credentials and authentication result are encrypted; success is behavioral inference only."
+    },
+    {
+      "id": "dns-tunneling",
+      "source": "10.10.0.50",
+      "queries": 12
+    },
+    {
+      "id": "periodic-beaconing",
+      "source": "10.10.0.60",
+      "interval_seconds": 60
+    }
+  ],
+  "expected_findings": [
+    {
+      "detector": "port-scan",
+      "title_contains": "varredura vertical",
+      "count": 1
+    },
+    {
+      "detector": "port-scan",
+      "title_contains": "varredura horizontal",
+      "count": 1
+    },
+    {
+      "detector": "authentication-abuse",
+      "title_contains": "bem-sucedida após falhas",
+      "count": 2
+    },
+    {
+      "detector": "cleartext-credential",
+      "title_contains": "malsucedida",
+      "count": 6
+    },
+    {
+      "detector": "cleartext-credential",
+      "title_contains": "texto claro bem-sucedida",
+      "count": 2
+    },
+    {
+      "detector": "cleartext-credential",
+      "title_contains": "Credencial HTTP",
+      "count": 1
+    },
+    {
+      "detector": "cleartext-protocol",
+      "title_contains": "FTP",
+      "count": 1
+    },
+    {
+      "detector": "cleartext-protocol",
+      "title_contains": "TELNET",
+      "count": 1
+    },
+    {
+      "detector": "cleartext-protocol",
+      "title_contains": "HTTP",
+      "count": 2
+    },
+    {
+      "detector": "web-attack-payload",
+      "title_contains": "SQL injection",
+      "count": 1
+    },
+    {
+      "detector": "web-attack-payload",
+      "title_contains": "path traversal",
+      "count": 1
+    },
+    {
+      "detector": "web-attack-payload",
+      "title_contains": "XSS",
+      "count": 1
+    },
+    {
+      "detector": "web-attack-payload",
+      "title_contains": "injeção de comandos",
+      "count": 1
+    },
+    {
+      "detector": "dns-anomaly",
+      "title_contains": "Consultas DNS",
+      "count": 1
+    },
+    {
+      "detector": "beaconing",
+      "title_contains": "beaconing",
+      "count": 1
+    }
+  ]
+}

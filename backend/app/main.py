@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import secrets
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -182,7 +183,7 @@ def create_app(
         return response
 
     application.include_router(router)
-    frontend_dir = Path("frontend/dist").resolve()
+    frontend_dir = _frontend_directory()
     if frontend_dir.is_dir():
         application.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
     return application
@@ -197,6 +198,13 @@ def _basic_credentials(value: str | None) -> tuple[str, str] | None:
     except (ValueError, UnicodeDecodeError):
         return None
     return username, password
+
+
+def _frontend_directory() -> Path:
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root is not None:
+        return Path(bundle_root) / "frontend" / "dist"
+    return Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 app = create_app()

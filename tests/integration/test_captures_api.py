@@ -245,6 +245,10 @@ def test_upload_and_get_valid_pcap(tmp_path: Path) -> None:
 def test_health_list_and_not_found(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         assert client.get("/healthz").json() == {"status": "ok"}
+        quality = client.get("/api/v1/quality/coverage").json()
+        assert quality["true_positive"] == 23
+        assert quality["false_positive"] == 0
+        assert quality["detector_version"] == "1.2.0"
         assert client.get("/api/v1/captures").json() == []
         assert client.get("/api/v1/captures/missing").status_code == 404
 
@@ -382,12 +386,16 @@ def test_normalized_flows_events_and_inventory(tmp_path: Path) -> None:
         analysis = client.get(f"/api/v1/analyses/{analysis_id}").json()
         flows = client.get(f"/api/v1/analyses/{analysis_id}/flows").json()
         events = client.get(f"/api/v1/analyses/{analysis_id}/events").json()
+        next_flows = client.get(
+            f"/api/v1/analyses/{analysis_id}/flows?limit=1&offset=1"
+        ).json()
         inventory = client.get(f"/api/v1/analyses/{analysis_id}/inventory").json()
 
         assert analysis["normalization"]["status"] == "completed"
         assert analysis["normalization"]["flow_count"] == 1
         assert analysis["normalization"]["event_count"] == 1
         assert flows[0]["application"] == "dns"
+        assert next_flows == []
         assert events[0]["details"]["query"] == "example.com"
         assert {host["ip"] for host in inventory["hosts"]} == {"10.0.0.5", "8.8.8.8"}
         assert inventory["services"][0]["port"] == 53

@@ -28,8 +28,9 @@ class _PendingAuthentication:
 class TsharkAuthenticationTracker:
     """Correlates cleartext authentication fields without retaining raw packet payloads."""
 
-    def __init__(self, analysis_id: str) -> None:
+    def __init__(self, analysis_id: str, source_name: str = "stdout.log") -> None:
         self._analysis_id = analysis_id
+        self._source_name = source_name
         self._pending: dict[str, _PendingAuthentication] = {}
 
     def consume(
@@ -45,7 +46,7 @@ class TsharkAuthenticationTracker:
     ) -> list[NetworkEvent]:
         if src_ip is None or dest_ip is None:
             return []
-        reference = f"tshark/stdout.log:packet:{index}"
+        reference = f"tshark/{self._source_name}:packet:{index}"
         stream = _value(row, "tcp.stream")
         key = stream or _conversation_key(src_ip, src_port, dest_ip, dest_port)
         protocol = _protocol(row, src_port, dest_port)
@@ -161,7 +162,13 @@ class TsharkAuthenticationTracker:
         elif protocol == "telnet":
             data = _value(row, "telnet.data")
             if data:
-                normalized = " ".join(data.replace("\r", " ").replace("\n", " ").split())
+                normalized = " ".join(
+                    data.replace("\\r", " ")
+                    .replace("\\n", " ")
+                    .replace("\r", " ")
+                    .replace("\n", " ")
+                    .split()
+                )
                 lower = normalized.lower()
                 from_server = src_ip == pending.server_ip and src_port == pending.server_port
                 if from_server:

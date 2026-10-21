@@ -12,6 +12,7 @@ from backend.app.detection.detectors import (
     LegacySnmpDetector,
     PortScanDetector,
     SignatureAlertDetector,
+    WebAttackPayloadDetector,
 )
 from backend.app.domain.findings import AssertionStatus, DetectionContext, Severity
 from backend.app.domain.network import NetworkEvent, NetworkFlow
@@ -26,6 +27,7 @@ def _flow(
     src_ip: str = "10.0.0.1",
     dest_ip: str = "10.0.0.2",
     dest_port: int = 443,
+    application: str | None = None,
 ) -> NetworkFlow:
     start = BASE_TIME + timedelta(seconds=seconds)
     return NetworkFlow(
@@ -40,7 +42,7 @@ def _flow(
         dest_ip=dest_ip,
         dest_port=dest_port,
         transport="tcp",
-        application=None,
+        application=application,
         src_bytes=60,
         dest_bytes=0,
         src_packets=1,
@@ -107,10 +109,22 @@ def test_detects_brute_force_password_spray_and_success_after_failures() -> None
         for index in range(5)
     ]
     repeated = [
-        _event(index + 10, result="failed", username="admin", seconds=index + 10)
+        _event(
+            index + 10,
+            result="failed",
+            username="admin",
+            seconds=index + 10,
+            details={"password": f"wrong-{index + 1}"},
+        )
         for index in range(5)
     ]
-    success = _event(30, result="success", username="admin", seconds=30)
+    success = _event(
+        30,
+        result="success",
+        username="admin",
+        seconds=30,
+        details={"password": "correct-password"},
+    )
 
     findings = AuthenticationDetector(DetectorConfig()).detect(
         DetectionContext("analysis", events=[*failures, *repeated, success])
@@ -122,8 +136,12 @@ def test_detects_brute_force_password_spray_and_success_after_failures() -> None
         "Autenticação bem-sucedida após falhas",
     }
     success_finding = next(finding for finding in findings if "bem-sucedida" in finding.title)
-    assert success_finding.summary.startswith("O IP 10.0.0.10 teve sucesso ao autenticar via SSH")
-    assert "usando o usuário admin" in success_finding.summary
+    assert success_finding.summary == (
+        "O IP 10.0.0.10 teve sucesso ao autenticar via SSH no IP 10.0.0.20, "
+        'usando o usuário admin e senha "correct-password", após 5 tentativa(s) '
+        'malsucedida(s), usando as senhas "wrong-1", "wrong-2", "wrong-3", '
+        '"wrong-4" e "wrong-5".'
+    )
     assert (
         AuthenticationDetector(DetectorConfig()).detect(
             DetectionContext("analysis", events=[success])
@@ -191,12 +209,15 @@ def test_http_status_does_not_claim_successful_login() -> None:
 
 def test_detects_cleartext_protocol_as_observed() -> None:
     finding = CleartextProtocolDetector().detect(
-        DetectionContext("analysis", flows=[_flow(1, dest_port=23)])
+        DetectionContext("analysis", flows=[_flow(1, dest_port=23, application="telnet")])
     )[0]
 
     assert finding.severity is Severity.HIGH
     assert finding.assertion_status is AssertionStatus.OBSERVED
     assert finding.destination_port == 23
+    assert CleartextProtocolDetector().detect(
+        DetectionContext("analysis", flows=[_flow(2, dest_port=23)])
+    ) == []
 
 
 def test_detects_repeated_high_entropy_dns_queries() -> None:
@@ -227,6 +248,69 @@ def test_detects_periodic_beacon_and_rejects_irregular_intervals() -> None:
 
     assert len(detector.detect(DetectionContext("analysis", flows=periodic))) == 1
     assert detector.detect(DetectionContext("analysis", flows=irregular)) == []
+    assert detector.detect(
+        DetectionContext("analysis", flows=[_flow(index, seconds=index) for index in range(5)])
+    ) == []
+
+
+def test_detects_web_attack_payload_without_claiming_success() -> None:
+    event = _event(
+        1,
+        application="http",
+        source="tshark",
+        event_type="packet",
+        details={
+            "http_method": "POST",
+            "http_uri": "/login",
+            "http_form_values": "admin' OR '1'='1'--,x",
+        },
+    )
+
+    finding = WebAttackPayloadDetector().detect(
+        DetectionContext("analysis", events=[event])
+    )[0]
+
+    assert "SQL injection" in finding.title
+    assert 'o padrão é "admin\' OR \'1\'=\'1\'--,x"' in finding.summary
+    assert "não é possível determinar" in finding.summary
+    assert finding.assertion_status is AssertionStatus.POTENTIAL
+
+
+def test_correlates_web_attack_response_and_reports_possible_success() -> None:
+    request = _event(
+        1,
+        seconds=1,
+        application="http",
+        source="tshark",
+        event_type="packet",
+        details={
+            "tcp_stream": 7,
+            "http_method": "POST",
+            "http_uri": "/login",
+            "http_form_values": "admin' OR '1'='1'--",
+        },
+    )
+    response = _event(
+        2,
+        seconds=2,
+        application="http",
+        source="tshark",
+        event_type="packet",
+        details={
+            "tcp_stream": 7,
+            "http_status": 200,
+            "http_body_preview": "Welcome admin",
+        },
+    )
+
+    finding = WebAttackPayloadDetector().detect(
+        DetectionContext("analysis", events=[request, response])
+    )[0]
+
+    assert 'respondeu HTTP 200 e retornou "Welcome admin"' in finding.summary
+    assert "possível exploração bem-sucedida" in finding.summary
+    assert finding.assertion_status is AssertionStatus.INFERRED
+    assert len(finding.evidence) == 2
 
 
 def test_converts_suricata_alert_into_explainable_finding() -> None:

@@ -17,13 +17,23 @@
       "file": "malicious-vertical-scan.pcap",
       "label": "malicious",
       "description": "Uma origem tenta quinze portas do mesmo destino.",
-      "expected_categories": ["network-service-scanning", "insecure-protocol"]
+      "expected_categories": ["network-service-scanning"]
     },
     {
       "file": "malicious-telnet.pcap",
       "label": "malicious",
       "description": "Conexão observada para serviço Telnet sem criptografia.",
       "expected_categories": ["insecure-protocol"]
+    },
+    {
+      "file": "comprehensive-attacks.pcap",
+      "label": "malicious",
+      "description": "Captura sintetica de referencia com scans, autenticacoes em texto claro, ataques web, DNS tunneling, beaconing e tentativas SSH.",
+      "expected_categories": [
+        "network-service-scanning",
+        "insecure-protocol"
+      ],
+      "expectations_file": "comprehensive-attacks.expected.json"
     }
   ]
 }
